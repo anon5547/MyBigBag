@@ -26,7 +26,8 @@ import sys
 import numpy as np
 import pandas as pd
 
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+_HERE = os.path.dirname(os.path.abspath(__file__))
+sys.path.insert(0, _HERE)
 
 from mql5_transcription import build_feature_vector          # noqa: E402
 from sniper_features import (                                # noqa: E402
@@ -77,6 +78,59 @@ def synth_bars(n: int = 2200, seed: int = 20260903) -> pd.DataFrame:
             "tick_volume": volume,
         }
     )
+
+
+def check_contract_vs_mqh() -> bool:
+    """
+    The contract, the MQL5 enum and the MQL5 name table are three hand-written
+    orderings of the same 40 features. One transposed line between them silently
+    feeds every value into the wrong model column, and nothing raises.
+    """
+    import re
+
+    repo = os.path.dirname(_HERE)
+    path = os.path.join(repo, "MQL5", "Include", "SniperAI", "Features.mqh")
+    if not os.path.exists(path):
+        print(f"  ?? {path} not found; skipping")
+        return True
+
+    src = open(path, encoding="utf-8").read()
+    ok = True
+
+    try:
+        block = src.split("static string names[SNP_FEATURE_DIM] =", 1)[1].split("};", 1)[0]
+        mqh_names = re.findall(r'"([a-z0-9_]+)"', block)
+    except IndexError:
+        print("  !! cannot locate the name table in Features.mqh")
+        return False
+
+    if mqh_names != FEATURE_NAMES:
+        ok = False
+        print(f"  !! name table differs from the contract "
+              f"({len(mqh_names)} vs {len(FEATURE_NAMES)})")
+        for i, (a, b) in enumerate(zip(FEATURE_NAMES, mqh_names)):
+            if a != b:
+                print(f"     [{i}] contract={a!r}  Features.mqh={b!r}")
+
+    try:
+        enum_block = src.split("enum ENUM_SNP_FEATURE", 1)[1].split("};", 1)[0]
+        enum_names = re.findall(r"\b(F_[A-Z0-9_]+)\b", enum_block)
+    except IndexError:
+        print("  !! cannot locate ENUM_SNP_FEATURE in Features.mqh")
+        return False
+
+    expect = ["F_" + n.upper() for n in FEATURE_NAMES]
+    if enum_names != expect:
+        ok = False
+        print(f"  !! enum order differs from the contract "
+              f"({len(enum_names)} vs {len(expect)})")
+        for i, (a, b) in enumerate(zip(expect, enum_names)):
+            if a != b:
+                print(f"     [{i}] expected={a}  Features.mqh={b}")
+
+    if ok:
+        print(f"  contract == ENUM_SNP_FEATURE == name table  ({len(FEATURE_NAMES)} features)")
+    return ok
 
 
 def compare(name: str, a: np.ndarray, b: np.ndarray) -> tuple[bool, float, int]:
@@ -181,21 +235,25 @@ def main() -> int:
         df = synth_bars()
         print(f"using {len(df)} synthetic bars (no --csv given)")
 
-    print("\n[1] transcription of the MQL5 loops  vs  pandas trainer path")
+    print("\n[1] feature ORDER: contract  vs  Features.mqh")
+    ok0 = check_contract_vs_mqh()
+    print("    ->", "PASS" if ok0 else "FAIL")
+
+    print("\n[2] transcription of the MQL5 loops  vs  pandas trainer path")
     ok1 = check_transcription_vs_pandas(df, args.probes)
     print("    ->", "PASS" if ok1 else "FAIL")
 
     ok2 = True
     if args.mql5:
-        print("\n[2] MetaTrader dump  vs  pandas trainer path")
+        print("\n[3] MetaTrader dump  vs  pandas trainer path")
         ok2 = check_mql5_dump(df, args.mql5)
         print("    ->", "PASS" if ok2 else "FAIL")
     else:
-        print("\n[2] skipped (no --mql5 dump given). Run ParityCheck.mq5 in the")
+        print("\n[3] skipped (no --mql5 dump given). Run ParityCheck.mq5 in the")
         print("    terminal on the SAME bars to close the loop end to end.")
 
     print()
-    if ok1 and ok2:
+    if ok0 and ok1 and ok2:
         print("PARITY OK")
         return 0
     print("PARITY BROKEN -- do not train, do not trade")

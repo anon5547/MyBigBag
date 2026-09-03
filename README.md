@@ -77,7 +77,9 @@ python tools/fetch_mt5_history.py --symbol XAUUSD --timeframe M5 --bars 200000 -
 ```bash
 python tools/parity_check.py
 ```
-ต้องขึ้น `PARITY OK` ถ้าไม่ผ่าน ห้ามไปต่อ
+ตรวจ 3 ด่าน: (1) ลำดับฟีเจอร์ contract ↔ `ENUM_SNP_FEATURE` ↔ ตารางชื่อใน `Features.mqh`
+(2) โค้ด MQL5 ถอดตรงตัว ↔ pandas (3) ผลจาก MT5 จริง ↔ pandas (ทำในขั้น 4)
+ต้องขึ้น `PARITY OK` ถ้าไม่ผ่าน **ห้ามไปต่อ**
 
 ### ขั้น 2 — เทรน
 ```bash
