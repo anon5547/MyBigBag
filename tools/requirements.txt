@@ -1,0 +1,18 @@
+# SniperAI V5 -- Python side (training / export only; the EA needs none of this)
+numpy>=1.24
+pandas>=2.0
+scikit-learn>=1.3
+joblib>=1.3
+
+# ONNX export. skl2onnx is enough for scikit-learn estimators.
+skl2onnx>=1.16
+onnx>=1.15
+onnxruntime>=1.17
+
+# Only if you train with LightGBM / XGBoost instead of scikit-learn:
+# lightgbm>=4.0
+# xgboost>=2.0
+# onnxmltools>=1.12
+
+# Only on the Windows box that runs MetaTrader, for tools/fetch_mt5_history.py:
+# MetaTrader5>=5.0.45

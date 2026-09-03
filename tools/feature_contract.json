@@ -1,0 +1,235 @@
+{
+  "contract_version": "5.0.0",
+  "description": "Single source of truth for the SniperAI V5 feature vector. MQL5 (Features.mqh) and Python (sniper_features.py) MUST produce identical values for identical OHLCV input. Any change here requires regenerating models AND bumping contract_version in Config.mqh.",
+  "timeframe": "M5",
+  "bar_indexing": "chronological (index 0 = oldest). Features are evaluated on the LAST CLOSED bar only.",
+  "warmup_bars": 1000,
+  "primary_dim": 40,
+  "meta_dim": 43,
+  "meta_extra": [
+    "primary_p_up",
+    "side",
+    "primary_edge"
+  ],
+  "meta_extra_notes": {
+    "primary_p_up": "primary model probability of the UP class, [0,1]",
+    "side": "+1.0 for BUY candidate, -1.0 for SELL candidate",
+    "primary_edge": "abs(2*primary_p_up - 1), distance from indecision"
+  },
+  "conventions": {
+    "ema": "ewm(span=p, adjust=False), seeded with src[0]  (NOT MT5's SMA seed)",
+    "wilder": "rma[i] = (rma[i-1]*(p-1) + src[i]) / p, seeded with src[0]  == ewm(alpha=1/p, adjust=False)",
+    "atr": "Wilder RMA of True Range (NOT MetaTrader's SMA-of-TR iATR)",
+    "stddev": "population standard deviation, ddof=0",
+    "donchian": "rolling window INCLUDES the current bar",
+    "eps": 1e-09,
+    "float_dtype": "float32 at the model boundary",
+    "hour": "fractional hour = dt.hour + dt.minute/60.0 (so 13:35 != 13:05 on M5)",
+    "day_of_week": "MetaTrader convention 0=Sunday .. 6=Saturday. In pandas use (ts.dayofweek + 1) % 7",
+    "macd": "macd/signal/hist are multiplied by 1000 and divided by close, so they are scale-free across the 1800->4300 XAUUSD range",
+    "bar_time": "bar OPEN time, in BROKER server time. Train on broker-time data or the time features are a lie.",
+    "warmup_rationale": "The slowest stateful component is the Wilder RMA(50) inside atr_ratio. Its seed influence decays as 0.98^k, so a 500-bar window still carries ~4e-4 of contamination and the EA's rolling window would disagree with the trainer's full-history pass. 1000 bars puts the residual below 1e-8, i.e. under float32 resolution. This was found by tools/parity_check.py, not by reading the code."
+  },
+  "features": [
+    {
+      "i": 0,
+      "name": "ret_1",
+      "group": "returns"
+    },
+    {
+      "i": 1,
+      "name": "ret_3",
+      "group": "returns"
+    },
+    {
+      "i": 2,
+      "name": "ret_5",
+      "group": "returns"
+    },
+    {
+      "i": 3,
+      "name": "ret_10",
+      "group": "returns"
+    },
+    {
+      "i": 4,
+      "name": "ret_1_lag1",
+      "group": "lag"
+    },
+    {
+      "i": 5,
+      "name": "ret_1_lag2",
+      "group": "lag"
+    },
+    {
+      "i": 6,
+      "name": "ret_1_lag3",
+      "group": "lag"
+    },
+    {
+      "i": 7,
+      "name": "rsi_7",
+      "group": "momentum"
+    },
+    {
+      "i": 8,
+      "name": "rsi_14",
+      "group": "momentum"
+    },
+    {
+      "i": 9,
+      "name": "rsi_14_lag1",
+      "group": "lag"
+    },
+    {
+      "i": 10,
+      "name": "macd",
+      "group": "momentum"
+    },
+    {
+      "i": 11,
+      "name": "macd_signal",
+      "group": "momentum"
+    },
+    {
+      "i": 12,
+      "name": "macd_hist",
+      "group": "momentum"
+    },
+    {
+      "i": 13,
+      "name": "macd_hist_lag1",
+      "group": "lag"
+    },
+    {
+      "i": 14,
+      "name": "adx_14",
+      "group": "trend"
+    },
+    {
+      "i": 15,
+      "name": "plus_di_14",
+      "group": "trend"
+    },
+    {
+      "i": 16,
+      "name": "minus_di_14",
+      "group": "trend"
+    },
+    {
+      "i": 17,
+      "name": "ema20_dist",
+      "group": "trend"
+    },
+    {
+      "i": 18,
+      "name": "sma60_dist",
+      "group": "trend"
+    },
+    {
+      "i": 19,
+      "name": "ema20_slope",
+      "group": "trend"
+    },
+    {
+      "i": 20,
+      "name": "atr14_norm",
+      "group": "volatility"
+    },
+    {
+      "i": 21,
+      "name": "atr_ratio",
+      "group": "volatility"
+    },
+    {
+      "i": 22,
+      "name": "bb_pctb",
+      "group": "volatility"
+    },
+    {
+      "i": 23,
+      "name": "bb_width",
+      "group": "volatility"
+    },
+    {
+      "i": 24,
+      "name": "dist_to_res",
+      "group": "structure"
+    },
+    {
+      "i": 25,
+      "name": "dist_to_sup",
+      "group": "structure"
+    },
+    {
+      "i": 26,
+      "name": "donchian_width",
+      "group": "structure"
+    },
+    {
+      "i": 27,
+      "name": "close_zscore_20",
+      "group": "structure"
+    },
+    {
+      "i": 28,
+      "name": "range_pct",
+      "group": "candle"
+    },
+    {
+      "i": 29,
+      "name": "body_pct",
+      "group": "candle"
+    },
+    {
+      "i": 30,
+      "name": "upper_wick_pct",
+      "group": "candle"
+    },
+    {
+      "i": 31,
+      "name": "lower_wick_pct",
+      "group": "candle"
+    },
+    {
+      "i": 32,
+      "name": "vol_delta",
+      "group": "orderflow"
+    },
+    {
+      "i": 33,
+      "name": "rvol_20",
+      "group": "orderflow"
+    },
+    {
+      "i": 34,
+      "name": "stoch_k_14",
+      "group": "momentum"
+    },
+    {
+      "i": 35,
+      "name": "stoch_d_3",
+      "group": "momentum"
+    },
+    {
+      "i": 36,
+      "name": "hour_sin",
+      "group": "time"
+    },
+    {
+      "i": 37,
+      "name": "hour_cos",
+      "group": "time"
+    },
+    {
+      "i": 38,
+      "name": "dow_sin",
+      "group": "time"
+    },
+    {
+      "i": 39,
+      "name": "dow_cos",
+      "group": "time"
+    }
+  ]
+}

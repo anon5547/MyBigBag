@@ -1,0 +1,18 @@
+# models & data (large, broker-specific, and never reproducible from git)
+*.pkl
+*.onnx
+*.csv
+!tools/feature_contract.json
+models/
+MQL5/Files/SniperAI/*
+!MQL5/Files/SniperAI/.gitkeep
+
+# python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+
+# metaeditor build output
+*.ex5
+*.log
