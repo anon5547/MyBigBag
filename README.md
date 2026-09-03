@@ -11,7 +11,10 @@ EA เนทีฟ MQL5 ที่เขียนใหม่ทั้งหม�
 | GUI | tkinter (แยกโปรเซส, ค้างได้) | Panel บนชาร์ต |
 | Feature parity | ไม่มีการตรวจ | มี test บังคับ (`tools/parity_check.py`) |
 
-> ⚠️ **อ่าน [`docs/REVIEW.md`](docs/REVIEW.md) ก่อนแตะบัญชีเงินจริง** — ในนั้นคือจุดตายของระบบ V4 ที่เห็นจากสกรีนช็อตของคุณ ทั้งหมด ไม่มีอวย
+> ⚠️ **อ่าน [`docs/VALIDATION.md`](docs/VALIDATION.md) ก่อน** — บอกว่าอะไรทดสอบแล้ว
+> อะไรยังไม่ได้ทดสอบ และบั๊กอะไรที่เจอตอนรันบนข้อมูลจริง
+>
+> ⚠️ **แล้วอ่าน [`docs/REVIEW.md`](docs/REVIEW.md) ก่อนแตะบัญชีเงินจริง** — ในนั้นคือจุดตายของระบบ V4 ที่เห็นจากสกรีนช็อตของคุณ ทั้งหมด ไม่มีอวย
 
 ---
 
@@ -37,9 +40,10 @@ tools/
   parity_check.py         ← ตัวตรวจ parity (ต้องผ่านก่อนเทรน)
   train_two_tier.py       ← เทรน primary + meta (triple barrier, purged CV)
   export_to_onnx.py       ← .pkl → .onnx ที่ MQL5 อ่านได้
-  fetch_mt5_history.py    ← ดึงบาร์จาก MT5 เป็น "เวลาเซิร์ฟเวอร์"
+  fetch_mt5_history.py    ← ดึงบาร์จาก MT5 เป็น "เวลาเซิร์ฟเวอร์" (ของจริง)
+  fetch_public_gold.py    ← ดึงทองฟรีจาก public API (สำหรับ smoke test เท่านั้น)
 docs/
-  ARCHITECTURE.md   REVIEW.md
+  ARCHITECTURE.md   REVIEW.md   VALIDATION.md
 ```
 
 ---
@@ -89,14 +93,33 @@ python tools/train_two_tier.py --csv XAUUSD_M5.csv --outdir models/ \
 สคริปต์จะพิมพ์ **threshold sweep** ออกมา — ใช้ตารางนั้นเลือก `InpConfThreshold`
 ไม่ใช่เดาเอาเอง และไม่ใช่ 0.35 เพราะมันคือ "เอาเกือบทุกสัญญาณ"
 
+**อ่านคอลัมน์ `independent~` ไม่ใช่ `trades`** — label แบบ triple barrier ซ้อนทับกัน
+`horizon` แท่ง ดังนั้น 1,374 ไม้ = ตัวอย่างอิสระจริงแค่ ~114 ตอนท้ายสคริปต์จะตัดสิน
+PASS/FAIL ให้ทีละ threshold ด้วย block bootstrap + Šidák correction
+**ถ้าขึ้น `NO THRESHOLD CLEARS THE BAR` แปลว่าไม่มี edge — อย่าเอาไปเทรด อย่ารันซ้ำจนกว่าจะสวย**
+
+> default model คือ `RandomForest` ไม่ใช่ `HistGradientBoosting` เหตุผลอยู่ใน
+> [`docs/VALIDATION.md`](docs/VALIDATION.md): HGB แปลงเป็น ONNX แล้วทำให้ **1.75%
+> ของการตัดสินใจเปลี่ยนไป** จากโมเดลที่คุณ validate
+
 ### ขั้น 3 — แปลงเป็น ONNX
 ```bash
 python tools/export_to_onnx.py \
     --primary models/primary.pkl --meta models/meta.pkl \
+    --verify-csv XAUUSD_M5.csv --gate 0.60 \
     --outdir "C:/Users/<you>/AppData/Roaming/MetaQuotes/Terminal/<id>/MQL5/Files/SniperAI"
 ```
-ตัว export จะ **ปฏิเสธ** ถ้าโมเดลไม่ตรงสัญญา 40/43 มิติ, ถ้า `classes_` ไม่ใช่ `[0,1]`,
-หรือถ้ากราฟ ONNX ออกมาเป็น zipmap (ซึ่ง MQL5 อ่านไม่ได้)
+**`--verify-csv` ไม่ใช่ของเสริม** ถ้าไม่ใส่ ตัวตรวจจะใช้ random vector ซึ่งมองไม่เห็น
+ความคลาดเคลื่อนที่เกิดตรงขอบ split ของ tree — วัดแล้ว random บอก drift `1.3e-07`
+ขณะที่ vector จริงบอก `2.1e-01` และ **3.2% ของการตัดสินใจเปลี่ยน**
+
+ตัว export จะ **ปฏิเสธและไม่เขียนไฟล์เลย** ถ้า:
+- มิติไม่ตรงสัญญา 40/43
+- `classes_` ไม่ใช่ `[0,1]`
+- กราฟออกมาเป็น zipmap (MQL5 อ่านไม่ได้)
+- **flip rate ที่ gate ที่คุณจะใช้จริง > 0.1%**
+
+สองชั้นเขียนพร้อมกันหรือไม่เขียนเลย — จะได้ไม่มีวันเหลือ `primary.onnx` เก่าคู่กับ `meta.onnx` ใหม่
 
 > โมเดลเดิมของคุณ (`XAUUSD_M5_Trinity_Sniper.pkl`, `XAUUSD_M5_Bidirectional_Sniper.pkl`)
 > เกือบแน่นอนว่าเทรนด้วยชุดฟีเจอร์คนละชุด — exporter จะบอกความกว้าง input ให้เห็นชัดๆ
@@ -110,6 +133,10 @@ python tools/parity_check.py \
     --mql5 ".../MQL5/Files/SniperAI/parity_mql5.csv"
 ```
 ผ่าน = ฟีเจอร์ตอนเทรนกับตอนเทรดเป็นสิ่งเดียวกันจริง
+
+> อยากลองไปป์ไลน์โดยยังไม่มี MT5? `python tools/fetch_public_gold.py --interval 5m --out gold.csv`
+> ดึงทอง COMEX ฟรีถึงวันปัจจุบัน พอสำหรับพิสูจน์ว่าโค้ดทำงาน **แต่ห้ามเอาโมเดลที่ได้ไปเทรด**
+> (เป็น futures ไม่ใช่ spot, UTC ไม่ใช่เวลาเซิร์ฟเวอร์, contract volume ไม่ใช่ tick volume)
 
 ### ขั้น 5 — Strategy Tester
 โหมด **Every tick based on real ticks**, ใส่ commission/spread จริง

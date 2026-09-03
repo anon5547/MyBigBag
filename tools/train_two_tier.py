@@ -147,6 +147,39 @@ def purged_folds(n: int, n_splits: int, horizon: int, embargo_frac: float = 0.01
 
 
 def make_model(kind: str, seed: int):
+    """
+    Default is RandomForest, and the reason is ONNX fidelity, not accuracy.
+
+    HistGradientBoosting bins features using float64 bin edges that do not
+    survive conversion to a float32 ONNX TreeEnsemble. Measured on 12,729
+    real gold bars, gate 0.60:
+
+        model   fit time   ONNX decision flips
+        hgb        0.6 s   1.75%     <- trades differently from what you validated
+        gb        33.7 s   0.000%    <- exact, but 57x slower; hours on 200k bars
+        rf         2.3 s   0.000%    <- exact and fast
+
+    A model that takes different trades than the pickle you validated is not
+    worth any amount of training speed, so hgb is not the default. gb stays
+    available for when you want boosting and can afford the wall clock.
+    """
+    if kind == "hgb":
+        from sklearn.ensemble import HistGradientBoostingClassifier
+
+        print("  !! --model hgb: this exports to ONNX imprecisely. Run "
+              "export_to_onnx.py with --verify-csv and check the flip rate.")
+        return HistGradientBoostingClassifier(
+            max_iter=300, learning_rate=0.04, max_depth=4,
+            min_samples_leaf=80, l2_regularization=5.0,
+            early_stopping=False, random_state=seed,
+        )
+    if kind == "gb":
+        from sklearn.ensemble import GradientBoostingClassifier
+
+        return GradientBoostingClassifier(
+            n_estimators=300, learning_rate=0.04, max_depth=4,
+            min_samples_leaf=80, subsample=0.8, random_state=seed,
+        )
     if kind == "lightgbm":
         from lightgbm import LGBMClassifier
 
@@ -164,15 +197,117 @@ def make_model(kind: str, seed: int):
             reg_lambda=5.0, random_state=seed, eval_metric="logloss",
             tree_method="hist",
         )
-    from sklearn.ensemble import HistGradientBoostingClassifier
+    from sklearn.ensemble import RandomForestClassifier
 
-    # deliberately shallow. 40 features on M5 gold will memorise anything
-    # you let them.
-    return HistGradientBoostingClassifier(
-        max_iter=300, learning_rate=0.04, max_depth=4,
-        min_samples_leaf=80, l2_regularization=5.0,
-        early_stopping=False, random_state=seed,
+    # deliberately shallow and leaf-heavy. 40 features on M5 gold will
+    # memorise anything you let them.
+    return RandomForestClassifier(
+        n_estimators=300, max_depth=8, min_samples_leaf=80,
+        n_jobs=-1, random_state=seed,
     )
+
+
+
+# --------------------------------------------------------------------------
+# statistical honesty
+# --------------------------------------------------------------------------
+def block_bootstrap(r: np.ndarray, horizon: int, n_boot: int = 4000, seed: int = 0):
+    """
+    Moving-block bootstrap with block length = the label horizon.
+
+    An ordinary bootstrap resamples trades independently, which is exactly
+    the assumption that is false here: a triple-barrier label at bar t
+    overlaps the next `horizon` labels, so neighbouring trades share most of
+    their price path. Resampling whole blocks keeps that dependence intact.
+    """
+    k = len(r)
+    n_blocks = k // horizon
+    if n_blocks < 2:
+        return None
+    rng = np.random.default_rng(seed)
+    starts = np.arange(0, k - horizon + 1)
+    means = np.empty(n_boot)
+    for i in range(n_boot):
+        idx = np.concatenate([np.arange(s, s + horizon) for s in rng.choice(starts, n_blocks)])
+        means[i] = r[idx].mean()
+    return means
+
+
+def significance(r: np.ndarray, horizon: int, seed: int = 0) -> dict:
+    """
+    Everything you need to decide whether a profit factor is a finding or a
+    coincidence. `r` is the per-trade signed log return, in time order.
+    """
+    r = np.asarray(r, dtype="float64")
+    k = len(r)
+    out = {"trades": int(k), "n_effective": int(max(1, k // horizon))}
+    if k < 2:
+        return out
+
+    mean = float(r.mean())
+    sd = float(r.std(ddof=1))
+    up = float(r[r > 0].sum())
+    dn = float(-r[r < 0].sum())
+
+    out["winrate"] = float((r > 0).mean())
+    out["expectancy_log"] = mean
+    out["profit_factor"] = (up / dn) if dn > 0 else float("inf")
+
+    if sd > 0:
+        # the t-stat everyone quotes, which assumes independent trades
+        out["t_naive"] = mean / (sd / np.sqrt(k))
+        # the one that survives overlapping labels
+        out["t_overlap_adjusted"] = mean / (sd / np.sqrt(out["n_effective"]))
+    else:
+        out["t_naive"] = out["t_overlap_adjusted"] = 0.0
+
+    boots = block_bootstrap(r, horizon, seed=seed)
+    if boots is not None:
+        lo, hi = np.percentile(boots, [2.5, 97.5])
+        out["ci95_lo"] = float(lo)
+        out["ci95_hi"] = float(hi)
+        out["p_expectancy_le_zero"] = float((boots <= 0).mean())
+    return out
+
+
+def verdict(stat: dict, n_thresholds_tried: int) -> tuple[bool, str]:
+    """
+    Two ways a good-looking number is a lie, both handled here:
+
+      * overlapping labels inflate the trade count, so `n_effective` is what
+        counts, not `trades`
+      * the threshold sweep already picked the best of N candidates, so the
+        bar for "significant" moves with N (Sidak correction)
+    """
+    n_eff = stat.get("n_effective", 0)
+    p = stat.get("p_expectancy_le_zero")
+
+    if n_eff < 30:
+        return False, f"NOT ENOUGH INDEPENDENT DATA (n_eff={n_eff} < 30)"
+    if p is None:
+        return False, "NOT ENOUGH DATA TO BOOTSTRAP"
+
+    alpha = 1.0 - (1.0 - 0.05) ** (1.0 / max(1, n_thresholds_tried))
+    if p > alpha:
+        return False, (f"NOT DISTINGUISHABLE FROM NOISE "
+                       f"(P(E[r]<=0)={p:.3f} > {alpha:.4f}, corrected for "
+                       f"{n_thresholds_tried} thresholds tried)")
+    return True, f"clears the bar (P(E[r]<=0)={p:.3f} <= {alpha:.4f})"
+
+
+def print_stat(label: str, stat: dict, n_thresholds_tried: int) -> bool:
+    pf = stat.get("profit_factor", float("nan"))
+    print(f"  {label}  trades={stat['trades']:5d}  independent~{stat['n_effective']:4d}  "
+          f"win={stat.get('winrate', float('nan')):.3f}  PF={pf:6.3f}")
+    print(f"        E[r]={stat.get('expectancy_log', 0):+.6f}   "
+          f"t(naive)={stat.get('t_naive', 0):5.2f}   "
+          f"t(overlap-adjusted)={stat.get('t_overlap_adjusted', 0):5.2f}")
+    if "ci95_lo" in stat:
+        print(f"        block-bootstrap 95% CI on E[r]: "
+              f"[{stat['ci95_lo']:+.6f}, {stat['ci95_hi']:+.6f}]")
+    ok, why = verdict(stat, n_thresholds_tried)
+    print(f"        -> {'PASS' if ok else 'FAIL'}: {why}")
+    return ok
 
 
 def report_binary(y_true, p, threshold=0.5) -> dict:
@@ -201,7 +336,9 @@ def main() -> int:
     ap.add_argument("--cost", type=float, default=0.30,
                     help="round-trip cost in PRICE units (XAUUSD: spread+comm+slip, e.g. 0.30)")
     ap.add_argument("--splits", type=int, default=6)
-    ap.add_argument("--model", choices=["hgb", "lightgbm", "xgboost"], default="hgb")
+    ap.add_argument("--model", choices=["rf", "gb", "hgb", "lightgbm", "xgboost"],
+                    default="rf",
+                    help="rf/gb export to ONNX exactly; hgb does not (see make_model)")
     ap.add_argument("--seed", type=int, default=42)
     ap.add_argument("--holdout-frac", type=float, default=0.2,
                     help="final untouched slice, evaluated once at the end")
@@ -313,12 +450,15 @@ def main() -> int:
         pf_up = float(r[r > 0].sum())
         pf_dn = float(-r[r < 0].sum())
         pf = pf_up / pf_dn if pf_dn > 0 else float("inf")
-        sweep.append({"threshold": round(float(thr), 2), "trades": k,
+        n_eff = max(1, k // args.horizon)
+        sweep.append({"threshold": round(float(thr), 2), "trades": k, "n_effective": n_eff,
                       "expectancy_log": exp, "winrate": win, "profit_factor": pf})
-        print(f"  thr={thr:.2f}  trades={k:6d}  win={win:.3f}  PF={pf:6.3f}  E[r]={exp:+.6f}")
-    print("\n  Pick the threshold with a positive expectancy AND enough trades to")
-    print("  trust it. The V4 panel ran at 0.35, which on this table is usually")
-    print("  'take almost everything'.")
+        print(f"  thr={thr:.2f}  trades={k:6d}  independent~{n_eff:5d}  "
+              f"win={win:.3f}  PF={pf:6.3f}  E[r]={exp:+.6f}")
+    print("\n  'trades' is NOT your sample size. Labels overlap by `horizon` bars, so")
+    print("  the 'independent' column is what any statistic actually rests on.")
+    print("  This table is also where selection bias enters: you are about to pick")
+    print("  the best of %d thresholds, so the holdout below corrects for that." % len(sweep))
 
     # ---------------- final holdout, evaluated once -----------------------
     print("\n=== FINAL HOLDOUT (never used for any decision above) ===")
@@ -331,7 +471,9 @@ def main() -> int:
     pm = meta.predict_proba(Mh)[:, 1]
     sr_h = hold["ret"].to_numpy(dtype="float64") * side_h
     print(f"  primary: auc={hold_primary['auc']:.4f} acc={hold_primary['acc']:.4f}")
+    n_tried = max(1, len(sweep))
     hold_sweep = []
+    any_pass = False
     for thr in (0.35, 0.50, 0.60, 0.70):
         take = pm >= thr
         k = int(take.sum())
@@ -339,13 +481,23 @@ def main() -> int:
             print(f"  thr={thr:.2f}  trades={k}  (too few to judge)")
             hold_sweep.append({"threshold": thr, "trades": k})
             continue
-        r = sr_h[take]
-        pf_dn = float(-r[r < 0].sum())
-        pf = float(r[r > 0].sum()) / pf_dn if pf_dn > 0 else float("inf")
-        print(f"  thr={thr:.2f}  trades={k:5d}  win={(r>0).mean():.3f}  "
-              f"PF={pf:6.3f}  E[r]={r.mean():+.6f}")
-        hold_sweep.append({"threshold": thr, "trades": k, "winrate": float((r > 0).mean()),
-                           "profit_factor": pf, "expectancy_log": float(r.mean())})
+        stat = significance(sr_h[take], args.horizon, seed=args.seed)
+        stat["threshold"] = float(thr)
+        ok = print_stat(f"thr={thr:.2f}", stat, n_tried)
+        stat["verdict_pass"] = bool(ok)
+        any_pass = any_pass or ok
+        hold_sweep.append(stat)
+
+    print()
+    if any_pass:
+        print("  At least one threshold clears the significance bar on data that was")
+        print("  never used for any decision. That is the weakest claim worth acting")
+        print("  on -- and it is still one instrument, one sample, one label scheme.")
+    else:
+        print("  NO THRESHOLD CLEARS THE BAR. A profit factor above 1.0 here is not")
+        print("  evidence; the confidence interval covers zero. Do not deploy this")
+        print("  model. Change the problem (features, horizon, instrument, timeframe)")
+        print("  rather than re-running until a fold looks good.")
 
     # ---------------- save ------------------------------------------------
     import joblib
@@ -363,6 +515,12 @@ def main() -> int:
         "threshold_sweep_oof": sweep,
         "holdout_primary": hold_primary,
         "holdout_sweep": hold_sweep,
+        "n_thresholds_tried": len(sweep),
+        "significance_notes": {
+            "n_effective": "trades // horizon; overlapping labels are not independent",
+            "bootstrap": "moving block, block length = horizon, 4000 resamples",
+            "multiple_testing": "Sidak correction over the threshold sweep",
+        },
     }
     with open(os.path.join(args.outdir, "report.json"), "w", encoding="utf-8") as fh:
         json.dump(report, fh, indent=2, default=float)
