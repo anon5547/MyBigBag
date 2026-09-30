@@ -1,0 +1,6 @@
+mcp>=1.6          # works with both 1.x (FastMCP) and 2.x (MCPServer)
+pyautogui
+mss
+pillow
+pyperclip         # needed to type Thai / any non-ASCII text
+# pytesseract     # optional: observe_screen(ocr=True); the model can already read screenshots
