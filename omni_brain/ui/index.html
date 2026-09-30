@@ -1,0 +1,326 @@
+<!doctype html>
+<html lang="th">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>OmniBrain</title>
+<style>
+:root{
+  --bg:#0a0c10; --panel:#11141a; --panel2:#161a22; --line:rgba(255,255,255,.08); --line2:rgba(255,255,255,.14);
+  --text:#e6e9ef; --dim:#8b93a3; --faint:#5b6372;
+  --accent:#62e0f5; --accent-ink:#04222a; --accent-soft:rgba(98,224,245,.12);
+  --live:#ffb547; --live-soft:rgba(255,181,71,.13); --danger:#ff6b6b; --ok:#5ee6a8;
+  --radius:14px;
+  --font:"Segoe UI Variable Text","Segoe UI","Leelawadee UI","Noto Sans Thai","Sarabun",system-ui,sans-serif;
+  --mono:"Cascadia Mono","Consolas","DejaVu Sans Mono",monospace;
+}
+@media (prefers-color-scheme:light){
+  :root:not([data-theme="dark"]){
+    --bg:#f5f6f8; --panel:#fff; --panel2:#f0f2f5; --line:rgba(10,20,40,.09); --line2:rgba(10,20,40,.16);
+    --text:#151a23; --dim:#5d6676; --faint:#8e96a5; --accent:#0a8fa8; --accent-ink:#fff; --accent-soft:rgba(10,143,168,.1);
+    --live:#b96a00; --live-soft:rgba(185,106,0,.1); --danger:#d6343a; --ok:#0f9d6a;
+  }
+}
+:root[data-theme="light"]{
+  --bg:#f5f6f8; --panel:#fff; --panel2:#f0f2f5; --line:rgba(10,20,40,.09); --line2:rgba(10,20,40,.16);
+  --text:#151a23; --dim:#5d6676; --faint:#8e96a5; --accent:#0a8fa8; --accent-ink:#fff; --accent-soft:rgba(10,143,168,.1);
+  --live:#b96a00; --live-soft:rgba(185,106,0,.1); --danger:#d6343a; --ok:#0f9d6a;
+}
+*{box-sizing:border-box;margin:0}
+html,body{height:100%}
+body{background:var(--bg);color:var(--text);font:15px/1.6 var(--font);display:flex;flex-direction:column;overflow:hidden}
+button{font:inherit;color:inherit;background:none;border:0;cursor:pointer}
+:focus-visible{outline:2px solid var(--accent);outline-offset:2px;border-radius:8px}
+
+/* live rail: a thin line across the top that changes state */
+#rail{height:2px;background:var(--line);transition:background .3s,box-shadow .3s}
+body.live #rail{background:var(--live);box-shadow:0 0 14px var(--live)}
+
+header{display:flex;align-items:center;gap:12px;padding:10px 18px;border-bottom:1px solid var(--line);background:var(--bg)}
+.brand{display:flex;align-items:center;gap:10px;font-weight:600;letter-spacing:.2px}
+.brand svg{width:22px;height:22px;color:var(--accent)}
+.spacer{flex:1}
+.pill{white-space:nowrap;display:inline-flex;align-items:center;gap:8px;padding:5px 12px;border-radius:999px;border:1px solid var(--line2);font-size:13px;color:var(--dim);font-variant-numeric:tabular-nums}
+.pill i{width:7px;height:7px;border-radius:50%;background:var(--faint)}
+body.live .pill{color:var(--live);border-color:color-mix(in srgb,var(--live) 45%,transparent);background:var(--live-soft)}
+body.live .pill i{background:var(--live);box-shadow:0 0 8px var(--live);animation:pulse 1.8s infinite}
+@keyframes pulse{50%{opacity:.35}}
+.btn{white-space:nowrap;padding:6px 14px;border-radius:10px;border:1px solid var(--line2);font-size:13.5px;color:var(--text);transition:background .15s,border-color .15s}
+.btn:hover{background:var(--panel2)}
+.btn.primary{background:var(--accent);color:var(--accent-ink);border-color:transparent;font-weight:600}
+.btn.primary:hover{filter:brightness(1.08);background:var(--accent)}
+.btn.stop{color:var(--danger);border-color:color-mix(in srgb,var(--danger) 50%,transparent)}
+.btn.stop:hover{background:color-mix(in srgb,var(--danger) 14%,transparent)}
+.btn.icon{padding:6px 9px}
+.btn:disabled{opacity:.45;cursor:default}
+
+main{flex:1;overflow-y:auto;scroll-behavior:smooth}
+.col{max-width:780px;margin:0 auto;padding:26px 20px 12px}
+.empty{min-height:55vh;display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center;gap:10px}
+.empty h1{font-size:28px;font-weight:600;letter-spacing:.2px}
+.empty p{color:var(--dim)}
+.chips{display:flex;flex-wrap:wrap;gap:8px;justify-content:center;margin-top:14px}
+.chip{padding:8px 14px;border:1px solid var(--line2);border-radius:999px;font-size:13.5px;color:var(--dim);transition:.15s}
+.chip:hover{color:var(--text);border-color:var(--accent);background:var(--accent-soft)}
+.warn{margin-top:14px;padding:10px 14px;border-radius:12px;background:var(--live-soft);color:var(--live);font-size:13.5px}
+
+.msg{margin:0 0 18px;display:flex;flex-direction:column;animation:in .22s ease-out}
+@keyframes in{from{opacity:0;transform:translateY(5px)}}
+.msg.user{align-items:flex-end}
+.msg.user .bubble{background:var(--accent-soft);border:1px solid color-mix(in srgb,var(--accent) 28%,transparent);padding:9px 14px;border-radius:16px 16px 4px 16px;max-width:85%}
+.msg.ai .bubble{max-width:100%}
+.bubble{white-space:pre-wrap;word-break:break-word}
+.msg.err .bubble{color:var(--danger);font-size:14px}
+.note{text-align:center;color:var(--faint);font-size:12.5px;margin:0 0 16px}
+.steps{display:flex;flex-direction:column;gap:5px;margin:0 0 16px;padding-left:2px}
+.step{display:flex;align-items:baseline;gap:9px;font-size:13px;color:var(--dim);animation:in .2s}
+.step b{font-weight:500;color:var(--accent);white-space:nowrap}
+.step span{font-family:var(--mono);font-size:12px;color:var(--faint);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.step.done b::before{content:"✓ ";color:var(--ok)}
+.step:not(.done) b::before{content:"› "}
+.shot{max-width:340px;width:100%;border-radius:10px;border:1px solid var(--line2);cursor:zoom-in;margin:2px 0 12px;display:block}
+.think{color:var(--faint);font-size:13px;display:flex;gap:4px;align-items:center;margin-bottom:14px}
+.think i{width:5px;height:5px;border-radius:50%;background:var(--accent);animation:b 1.1s infinite}
+.think i:nth-child(2){animation-delay:.15s}.think i:nth-child(3){animation-delay:.3s}
+@keyframes b{0%,80%,100%{opacity:.25}40%{opacity:1}}
+
+footer{border-top:1px solid var(--line);background:var(--bg);padding:12px 18px 10px}
+.composer{max-width:780px;margin:0 auto;display:flex;gap:10px;align-items:flex-end;background:var(--panel);border:1px solid var(--line2);border-radius:var(--radius);padding:8px 8px 8px 14px;transition:border-color .15s,box-shadow .15s}
+.composer:focus-within{border-color:var(--accent);box-shadow:0 0 0 3px var(--accent-soft)}
+textarea{flex:1;background:none;border:0;outline:0;color:var(--text);font:inherit;resize:none;max-height:140px;padding:5px 0}
+textarea::placeholder{color:var(--faint)}
+.send{width:38px;height:38px;border-radius:10px;background:var(--accent);color:var(--accent-ink);display:grid;place-items:center;flex:none}
+.send:disabled{background:var(--panel2);color:var(--faint);cursor:default}
+.send svg{width:18px;height:18px}
+.meter{max-width:780px;margin:8px auto 0;display:flex;gap:16px;flex-wrap:wrap;font-size:12px;color:var(--faint);font-variant-numeric:tabular-nums}
+.meter b{color:var(--dim);font-weight:500}
+.meter a{color:var(--faint);cursor:pointer;margin-left:auto}.meter a:hover{color:var(--text)}
+
+/* drawer */
+#scrim{position:fixed;inset:0;background:rgba(0,0,0,.45);opacity:0;pointer-events:none;transition:.2s}
+#drawer{position:fixed;top:0;right:0;bottom:0;width:min(400px,100%);background:var(--panel);border-left:1px solid var(--line2);transform:translateX(102%);transition:transform .25s cubic-bezier(.2,.8,.2,1);display:flex;flex-direction:column;z-index:5}
+body.drawer #drawer{transform:none}body.drawer #scrim{opacity:1;pointer-events:auto}
+.tabs{display:flex;gap:4px;padding:12px 14px 0;border-bottom:1px solid var(--line)}
+.tab{padding:8px 14px;color:var(--dim);border-bottom:2px solid transparent;margin-bottom:-1px}
+.tab.on{color:var(--text);border-color:var(--accent)}
+.pane{display:none;padding:16px 18px 24px;overflow-y:auto;flex:1}.pane.on{display:block}
+label{display:block;font-size:12.5px;color:var(--dim);margin:14px 0 5px}
+input,select{width:100%;background:var(--bg);border:1px solid var(--line2);color:var(--text);border-radius:9px;padding:8px 11px;font:inherit;font-size:14px;outline:0}
+input:focus,select:focus{border-color:var(--accent)}
+.row{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+.hint{font-size:12px;color:var(--faint);margin-top:4px;line-height:1.5}
+.actions{display:flex;gap:8px;margin-top:18px}
+.result{margin-top:12px;padding:10px 12px;border-radius:10px;background:var(--panel2);font-size:13px;line-height:1.7}
+.ok{color:var(--ok)}.bad{color:var(--danger)}
+.skill{display:flex;align-items:center;gap:10px;padding:11px 0;border-bottom:1px solid var(--line)}
+.skill div{flex:1;min-width:0}.skill strong{font-weight:500;display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.skill small{color:var(--faint);font-size:12px}
+
+/* popover + lightbox */
+#pop{position:absolute;right:18px;top:58px;width:290px;background:var(--panel);border:1px solid var(--line2);border-radius:var(--radius);padding:16px;display:none;z-index:4;box-shadow:0 18px 50px rgba(0,0,0,.4)}
+#pop.on{display:block}
+#pop h3{font-size:15px;font-weight:600;margin-bottom:4px}
+#pop p{font-size:13px;color:var(--dim);margin-bottom:12px}
+.seg{display:flex;gap:6px;margin-bottom:14px}
+.seg button{flex:1;padding:7px;border:1px solid var(--line2);border-radius:9px;font-size:13.5px;color:var(--dim)}
+.seg button.on{border-color:var(--live);color:var(--live);background:var(--live-soft)}
+#lb{position:fixed;inset:0;background:rgba(0,0,0,.85);display:none;place-items:center;z-index:9;cursor:zoom-out}
+#lb.on{display:grid}#lb img{max-width:94vw;max-height:92vh;border-radius:8px}
+@media (max-width:640px){.hide-s{display:none}.brand span{display:none}header{gap:8px;padding:10px 12px}.btn{padding:6px 10px}.col{padding:18px 14px 8px}}
+@media (prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}}
+</style>
+</head>
+<body>
+<div id="rail"></div>
+<header>
+  <div class="brand">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><circle cx="12" cy="12" r="3"/><ellipse cx="12" cy="12" rx="10" ry="4.2" transform="rotate(60 12 12)"/><ellipse cx="12" cy="12" rx="10" ry="4.2" transform="rotate(-60 12 12)"/></svg>
+    <span>OmniBrain</span>
+  </div>
+  <div class="spacer"></div>
+  <div class="pill" id="pill" role="status"><i></i><span id="pillText">โหมดจำลอง</span></div>
+  <button class="btn" id="lockBtn">ปลดล็อก</button>
+  <button class="btn stop" id="stopBtn" title="หยุดทันทีและล็อกกลับโหมดจำลอง">หยุด</button>
+  <button class="btn icon" id="gear" aria-label="ตั้งค่า">
+    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/></svg>
+  </button>
+</header>
+
+<div id="pop" role="dialog" aria-label="ยืนยันการควบคุมจริง">
+  <h3>ให้ AI ควบคุมเครื่องจริง?</h3>
+  <p>AI จะขยับเมาส์และพิมพ์แทนคุณ สิทธิ์หมดเองเมื่อครบเวลา ชักเมาส์ไปมุมซ้ายบนเพื่อหยุดทันที</p>
+  <div class="seg" id="seg"><button data-m="5">5 นาที</button><button data-m="10" class="on">10 นาที</button><button data-m="30">30 นาที</button></div>
+  <div class="actions" style="margin:0"><button class="btn" id="popCancel">ยกเลิก</button><button class="btn primary" id="popOk" style="flex:1">ยืนยัน ปลดล็อก</button></div>
+</div>
+
+<main id="main"><div class="col" id="col"></div></main>
+
+<footer>
+  <div class="composer">
+    <textarea id="input" rows="1" placeholder="บอกสิ่งที่อยากให้ทำ…" title="Enter = ส่ง · Shift+Enter = ขึ้นบรรทัดใหม่"></textarea>
+    <button class="send" id="send" aria-label="ส่ง"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 19V5M5 12l7-7 7 7"/></svg></button>
+  </div>
+  <div class="meter">
+    <span>อินพุต <b id="mIn">0</b></span><span>เอาต์พุต <b id="mOut">0</b></span><span class="hide-s">แคช <b id="mCache">0</b></span>
+    <span>≈ <b id="mCost">—</b></span><span class="hide-s">เรียก <b id="mCalls">0</b> ครั้ง</span><a id="clear">ล้างแชท</a>
+  </div>
+</footer>
+
+<div id="scrim"></div>
+<aside id="drawer" aria-label="ตั้งค่า">
+  <div class="tabs"><button class="tab on" data-p="p1">ตั้งค่า</button><button class="tab" data-p="p2">สกิล</button><span class="spacer"></span><button class="btn icon" id="closeDrawer" aria-label="ปิด">✕</button></div>
+  <div class="pane on" id="p1">
+    <label for="preset">ค่าย API (รองรับแบบ OpenAI-compatible)</label>
+    <select id="preset"></select>
+    <label for="base_url">Base URL</label><input id="base_url" spellcheck="false">
+    <label for="model">ชื่อโมเดล</label><input id="model" spellcheck="false" placeholder="คัดลอกจากหน้าเว็บของค่ายนั้น">
+    <div class="hint">ต้องเป็นโมเดลที่ “ดูภาพได้” ถ้าจะให้ควบคุมหน้าจอ กดทดสอบด้านล่างเพื่อยืนยัน</div>
+    <label for="api_key">API Key</label><input id="api_key" type="password" autocomplete="off" placeholder="">
+    <div class="hint" id="keyHint"></div>
+    <div class="row">
+      <div><label for="price_in">ราคา input ($/1M)</label><input id="price_in" type="number" min="0" step="0.01"></div>
+      <div><label for="price_out">ราคา output ($/1M)</label><input id="price_out" type="number" min="0" step="0.01"></div>
+    </div>
+    <div class="hint">กรอกเพื่อให้ตัวนับค่าใช้จ่ายแสดงเป็นดอลลาร์ (เว้น 0 = แสดงแต่จำนวนโทเคน)</div>
+    <label for="image_width">ความกว้างภาพหน้าจอ (เล็ก = ประหยัดโทเคน)</label>
+    <select id="image_width"><option value="768">768 — ประหยัดสุด</option><option value="1024">1024 — แนะนำ</option><option value="1280">1280 — ละเอียด</option></select>
+    <div class="row">
+      <div><label for="history_turns">จำบทสนทนา (รอบ)</label><input id="history_turns" type="number" min="1" max="30"></div>
+      <div><label for="max_steps">ขั้นตอนสูงสุด/ข้อความ</label><input id="max_steps" type="number" min="1" max="40"></div>
+    </div>
+    <div class="actions"><button class="btn primary" id="save">บันทึก</button><button class="btn" id="test">ทดสอบโมเดล</button></div>
+    <div class="result" id="testOut" style="display:none"></div>
+  </div>
+  <div class="pane" id="p2">
+    <p class="hint" style="margin:0 0 6px">สกิลที่ AI บันทึกไว้ กด “เล่น” เพื่อรันซ้ำโดยไม่เสียโทเคนเลย (ต้องปลดล็อกก่อนจึงจะทำจริง)</p>
+    <div id="skills"></div>
+  </div>
+</aside>
+<div id="lb"><img alt=""></div>
+
+<script>
+const TOKEN="__OMNI_TOKEN__";
+const $=id=>document.getElementById(id);
+const api=async(p,b)=>{const r=await fetch(p,{method:b===undefined?"GET":"POST",headers:{"X-Omni-Token":TOKEN,"Content-Type":"application/json"},body:b===undefined?undefined:JSON.stringify(b)});
+  if(!r.ok&&r.status!==409)throw new Error(r.status);return r.json()};
+const fmt=n=>(n||0).toLocaleString("th-TH");
+let st=null,lastId=0,busy=false,minutes=10,leaseEnd=0,curSteps=null,thinking=null,hasMsgs=false;
+const EXAMPLES=["เปิด Notepad แล้วพิมพ์ทักทายภาษาไทย","ดูหน้าจอตอนนี้แล้วสรุปให้หน่อยว่าเปิดอะไรอยู่","จำไว้ว่าฉันชอบให้ตอบสั้นๆ"];
+
+function el(tag,cls,text){const e=document.createElement(tag);if(cls)e.className=cls;if(text!==undefined)e.textContent=text;return e}
+function scroll(){const m=$("main");m.scrollTop=m.scrollHeight}
+
+function renderEmpty(){
+  const col=$("col");col.textContent="";
+  const d=el("div","empty");
+  d.append(el("h1","","พร้อมใช้งาน"),el("p","","พิมพ์สิ่งที่อยากให้ทำบนหน้าจอ ระบบอยู่ในโหมดจำลองจนกว่าคุณจะปลดล็อกเอง"));
+  const c=el("div","chips");
+  EXAMPLES.forEach(t=>{const b=el("button","chip",t);b.onclick=()=>{$("input").value=t;$("input").focus()};c.append(b)});
+  d.append(c);
+  if(st&&(!st.settings.model||!st.settings.has_key)){const w=el("div","warn","ยังไม่ได้ตั้งค่า API — กดไอคอนเฟืองมุมขวาบน ใส่โมเดลและคีย์ แล้วกด “ทดสอบโมเดล”");d.append(w)}
+  col.append(d);hasMsgs=false;
+}
+function ensureList(){if(!hasMsgs){$("col").textContent="";hasMsgs=true}}
+function stopThinking(){if(thinking){thinking.remove();thinking=null}}
+function startThinking(){stopThinking();const t=el("div","think");t.append(el("i"),el("i"),el("i"));thinking=t;$("col").append(t);scroll()}
+
+function handle(ev){
+  if(ev.type==="user"){ensureList();curSteps=null;const m=el("div","msg user");m.append(el("div","bubble",ev.text));$("col").append(m);startThinking()}
+  else if(ev.type==="assistant"||ev.type==="error"){ensureList();stopThinking();curSteps=null;const m=el("div","msg "+(ev.type==="error"?"err":"ai"));m.append(el("div","bubble",(ev.type==="error"?"⚠ ":"")+ev.text));$("col").append(m);if(busy)startThinking()}
+  else if(ev.type==="tool"){ensureList();stopThinking();if(!curSteps){curSteps=el("div","steps");$("col").append(curSteps)}
+    const s=el("div","step");s.dataset.name=ev.name;s.append(el("b","",ev.label),el("span","",ev.args&&ev.args!=="{}"?ev.args:""));curSteps.append(s);startThinking()}
+  else if(ev.type==="tool_result"&&curSteps){const s=[...curSteps.children].reverse().find(x=>x.dataset.name===ev.name&&!x.classList.contains("done"));if(s){s.classList.add("done");s.title=ev.text}}
+  else if(ev.type==="image"){ensureList();stopThinking();const i=el("img","shot");i.src=ev.url;i.alt="ภาพหน้าจอที่ AI เห็น";i.onclick=()=>{$("lb").querySelector("img").src=ev.url;$("lb").classList.add("on")};$("col").append(i);startThinking()}
+  else if(ev.type==="notice"){ensureList();$("col").append(el("div","note",ev.text))}
+  else if(ev.type==="done"){stopThinking();curSteps=null}
+  scroll();
+}
+
+async function pollEvents(){
+  try{const r=await api("/api/events?after="+lastId);for(const e of r.events){lastId=e.id;handle(e)}}catch(e){}
+  setTimeout(pollEvents,400);
+}
+function fillSettings(s){
+  const cfg=s.settings;
+  $("preset").innerHTML="";s.presets.forEach(p=>{const o=el("option","",p.name);o.value=p.id;$("preset").append(o)});
+  $("preset").value=cfg.preset;
+  for(const k of ["base_url","model","price_in","price_out","image_width","history_turns","max_steps"])$(k).value=cfg[k];
+  $("keyHint").textContent=cfg.has_key?"บันทึกคีย์ไว้แล้ว (เว้นว่างถ้าไม่เปลี่ยน)":"ยังไม่มีคีย์ — เก็บไว้ในเครื่องคุณเท่านั้น";
+}
+let settingsFilled=false;
+async function refresh(){
+  try{
+    st=await api("/api/state");
+    if(!settingsFilled){fillSettings(st);settingsFilled=true}
+    busy=st.busy;const live=st.status.mode==="LIVE";
+    document.body.classList.toggle("live",live);
+    leaseEnd=live?Date.now()+st.status.lease_seconds_left*1000:0;
+    $("lockBtn").textContent=live?"ล็อก":"ปลดล็อก";
+    $("send").disabled=busy;
+    const u=st.usage;$("mIn").textContent=fmt(u.prompt);$("mOut").textContent=fmt(u.completion);$("mCache").textContent=fmt(u.cached);$("mCalls").textContent=fmt(u.calls);
+    $("mCost").textContent=(st.settings.price_in||st.settings.price_out)?"$"+u.cost.toFixed(u.cost<0.01?5:3):"—";
+    if(!hasMsgs)renderEmpty();
+    renderSkills();
+  }catch(e){}
+  setTimeout(refresh,1200);
+}
+function tick(){
+  const live=document.body.classList.contains("live");
+  if(live){const s=Math.max(0,Math.round((leaseEnd-Date.now())/1000));$("pillText").textContent="ควบคุมจริง "+String(Math.floor(s/60)).padStart(2,"0")+":"+String(s%60).padStart(2,"0")}
+  else $("pillText").textContent="โหมดจำลอง";
+}
+setInterval(tick,500);
+
+function renderSkills(){
+  if(!st)return;const box=$("skills");const sig=JSON.stringify(st.skills)+st.status.mode;if(box.dataset.sig===sig)return;box.dataset.sig=sig;box.textContent="";
+  if(!st.skills.length){box.append(el("p","hint","ยังไม่มีสกิล — เมื่อ AI ทำงานสำเร็จ มันจะบันทึกไว้ที่นี่"));return}
+  st.skills.forEach(k=>{const r=el("div","skill"),d=el("div");d.append(el("strong","",k.skill_name),el("small","",`${k.app_context||"-"} · ${k.steps} ขั้น · สำเร็จ ${k.success_count} / พลาด ${k.fail_count}`));
+    const b=el("button","btn",st.status.mode==="LIVE"?"เล่น":"ลองเล่น (จำลอง)");b.onclick=async()=>{b.disabled=true;await api("/api/skill/run",{name:k.skill_name});b.disabled=false;closeDrawer()};r.append(d,b);box.append(r)});
+}
+
+async function send(){
+  const t=$("input").value.trim();if(!t||busy)return;
+  $("input").value="";autosize();busy=true;$("send").disabled=true;
+  try{const r=await api("/api/chat",{text:t});if(!r.ok)throw 0}catch(e){ensureList();const m=el("div","msg err");m.append(el("div","bubble","ส่งไม่สำเร็จ (กำลังทำงานอยู่?)"));$("col").append(m);busy=false}
+}
+function autosize(){const i=$("input");i.style.height="auto";i.style.height=Math.min(i.scrollHeight,140)+"px"}
+$("input").addEventListener("input",autosize);
+$("input").addEventListener("keydown",e=>{if(e.key==="Enter"&&!e.shiftKey&&!e.isComposing){e.preventDefault();send()}});
+$("send").onclick=send;
+
+$("lockBtn").onclick=async()=>{
+  if(document.body.classList.contains("live")){await api("/api/lock",{});refresh()}else $("pop").classList.toggle("on")};
+$("popCancel").onclick=()=>$("pop").classList.remove("on");
+$("seg").onclick=e=>{const b=e.target.closest("button");if(!b)return;minutes=+b.dataset.m;[...$("seg").children].forEach(x=>x.classList.toggle("on",x===b))};
+$("popOk").onclick=async()=>{await api("/api/unlock",{minutes});$("pop").classList.remove("on");refresh()};
+$("stopBtn").onclick=async()=>{await api("/api/stop",{});refresh()};
+$("clear").onclick=async()=>{await api("/api/reset",{});lastId=0;curSteps=null;stopThinking();renderEmpty()};
+document.addEventListener("keydown",e=>{if(e.key==="Escape"){$("pop").classList.remove("on");$("lb").classList.remove("on");closeDrawer()}});
+$("lb").onclick=()=>$("lb").classList.remove("on");
+
+function openDrawer(){document.body.classList.add("drawer")}
+function closeDrawer(){document.body.classList.remove("drawer")}
+$("gear").onclick=openDrawer;$("closeDrawer").onclick=closeDrawer;$("scrim").onclick=closeDrawer;
+document.querySelectorAll(".tab").forEach(t=>t.onclick=()=>{document.querySelectorAll(".tab").forEach(x=>x.classList.toggle("on",x===t));document.querySelectorAll(".pane").forEach(p=>p.classList.toggle("on",p.id===t.dataset.p))});
+$("preset").onchange=()=>{const p=st.presets.find(x=>x.id===$("preset").value);if(p&&p.base_url)$("base_url").value=p.base_url};
+async function saveSettings(){
+  const b={preset:$("preset").value};
+  for(const k of ["base_url","model","price_in","price_out","image_width","history_turns","max_steps"])b[k]=$(k).value;
+  if($("api_key").value)b.api_key=$("api_key").value;
+  const r=await api("/api/settings",b);$("api_key").value="";st=r.state;settingsFilled=false;fillSettings(st);settingsFilled=true;if(!hasMsgs)renderEmpty();
+}
+$("save").onclick=async()=>{await saveSettings();const o=$("testOut");o.style.display="block";o.innerHTML='<span class="ok">บันทึกแล้ว</span>'};
+$("test").onclick=async()=>{
+  await saveSettings();const o=$("testOut");o.style.display="block";o.textContent="กำลังทดสอบ…";$("test").disabled=true;
+  try{const r=await api("/api/selftest",{});const L=[];
+    if(!r.connect){L.push('<span class="bad">เชื่อมต่อไม่ได้</span>');if(r.error)L.push(esc(r.error))}
+    else{L.push(`<span class="ok">เชื่อมต่อได้</span> · ${r.connect_ms} ms`);
+      L.push(r.vision?`<span class="ok">อ่านภาพได้</span> · ${r.vision_ms} ms · ภาพ ${fmt(r.vision_tokens)} โทเคน`:`<span class="bad">อ่านภาพไม่ได้</span> — โมเดลนี้ใช้ควบคุมหน้าจอไม่ได้${r.vision_error?"<br>"+esc(r.vision_error):""}`)}
+    o.innerHTML=L.join("<br>")}catch(e){o.innerHTML='<span class="bad">ทดสอบล้มเหลว</span>'}
+  $("test").disabled=false};
+function esc(s){return String(s).replace(/[&<>]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;"}[c]))}
+
+renderEmpty();refresh();pollEvents();tick();
+</script>
+</body>
+</html>

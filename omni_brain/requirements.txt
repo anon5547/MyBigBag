@@ -1,6 +1,8 @@
-mcp>=1.6          # works with both 1.x (FastMCP) and 2.x (MCPServer)
+mcp>=1.6          # only needed to use omni_brain_mcp.py as an MCP server; works with 1.x and 2.x
 pyautogui
 mss
 pillow
-pyperclip         # needed to type Thai / any non-ASCII text
-# pytesseract     # optional: observe_screen(ocr=True); the model can already read screenshots
+pyperclip         # types Thai / any non-ASCII text
+pywebview         # native window (Edge WebView2 on Win10/11); without it the app opens in your browser
+keyring           # optional: keeps the API key in Windows Credential Manager instead of a file
+# pytesseract     # optional: look(ocr=true); the model can already read screenshots
