@@ -94,6 +94,7 @@ class Safety:
         self.code_from_env = bool(os.environ.get("OMNI_UNLOCK_CODE"))
         self.bad_attempts = 0
         self.blocked_until = 0.0
+        self.dialog_cooldown_until = 0.0
         self.tickets: Dict[str, Ticket] = {}
         self.last_bot_pos: Optional[Tuple[int, int]] = None
         self.action_times: Deque[float] = deque()
@@ -437,6 +438,13 @@ def safety_status() -> str:
     return _jdump(_status())
 
 
+def _open_lease(minutes: int, how: str) -> str:
+    minutes = max(1, min(int(minutes), MAX_LEASE_MIN))
+    S.live_until = time.monotonic() + minutes * 60
+    log_episode("unlock", how, f"{minutes} min lease", True)
+    return _jdump({"status": "LIVE", "minutes": minutes, **{k: v for k, v in _status().items() if k != "mode"}})
+
+
 @tool(destructiveHint=True)
 def unlock_live(code: str, minutes: int = DEFAULT_LEASE_MIN) -> str:
     """Open a time-boxed LIVE lease. `code` is given by the human (env OMNI_UNLOCK_CODE / server stderr).
@@ -451,10 +459,42 @@ def unlock_live(code: str, minutes: int = DEFAULT_LEASE_MIN) -> str:
             log_episode("unlock_failed", "", "wrong code", False)
             return "[DENIED] wrong code"
         S.bad_attempts = 0
+        return _open_lease(minutes, "code")
+
+
+def _confirm_dialog(minutes: int) -> bool:
+    """Native Windows Yes/No box (default button = No, topmost). Blocks until the human answers."""
+    import ctypes
+
+    MB_YESNO, MB_ICONWARNING, MB_DEFBUTTON2, MB_SETFOREGROUND, MB_TOPMOST, IDYES = 0x4, 0x30, 0x100, 0x10000, 0x40000, 6
+    msg = f"An AI agent asks to control your mouse and keyboard for {minutes} min.\n\nAllow?"
+    return ctypes.windll.user32.MessageBoxW(
+        0, msg, "OmniBrain: allow LIVE control?", MB_YESNO | MB_ICONWARNING | MB_DEFBUTTON2 | MB_SETFOREGROUND | MB_TOPMOST
+    ) == IDYES
+
+
+@tool(destructiveHint=True)
+def request_live_unlock(minutes: int = DEFAULT_LEASE_MIN) -> str:
+    """Windows only: pop a native Yes/No box so the human can open a LIVE lease without any code stored in a
+    config file. Only allowed while locked (so the agent cannot confirm its own request with a live mouse).
+    The call blocks until the human answers; one request per 30 s."""
+    if sys.platform != "win32":
+        return "[UNSUPPORTED] only on Windows; use unlock_live(code) instead"
+    with S.mutex:
+        if S.is_live:
+            return "[ALREADY LIVE] lease still open; no confirmation needed or accepted"
+        if time.monotonic() < S.dialog_cooldown_until:
+            return "[DENIED] asked too recently, wait 30 s"
+        S.dialog_cooldown_until = time.monotonic() + 30
         minutes = max(1, min(int(minutes), MAX_LEASE_MIN))
-        S.live_until = time.monotonic() + minutes * 60
-    log_episode("unlock", "", f"{minutes} min lease", True)
-    return _jdump({"status": "LIVE", "minutes": minutes, **{k: v for k, v in _status().items() if k != "mode"}})
+        try:
+            ok = _confirm_dialog(minutes)
+        except Exception as e:
+            return f"[ERROR] dialog failed: {e}"
+        if not ok:
+            log_episode("unlock_dialog", "", "human said no", False)
+            return "[DENIED] human declined"
+        return _open_lease(minutes, "dialog")
 
 
 @tool(idempotentHint=True)

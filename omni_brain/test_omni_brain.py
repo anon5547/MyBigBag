@@ -268,6 +268,28 @@ def test_image_coords_are_mapped_to_screen(env):
     assert "prior observe_screen" in ob.execute_pc_action(ticket(), "click", 200, 100, coords="image")
 
 
+# ---------- windows confirmation dialog ----------
+def test_dialog_unsupported_off_windows():
+    assert "UNSUPPORTED" in ob.request_live_unlock()
+
+
+def test_dialog_yes_opens_lease_no_denies_and_cooldown(monkeypatch):
+    monkeypatch.setattr(ob.sys, "platform", "win32")
+    answers = iter([False, True])
+    monkeypatch.setattr(ob, "_confirm_dialog", lambda m: next(answers))
+    assert "declined" in ob.request_live_unlock(5)
+    assert "too recently" in ob.request_live_unlock(5)
+    ob.S.dialog_cooldown_until = 0
+    assert "LIVE" in ob.request_live_unlock(5) and json.loads(ob.safety_status())["mode"] == "LIVE"
+
+
+def test_dialog_refused_while_already_live(monkeypatch):
+    monkeypatch.setattr(ob.sys, "platform", "win32")
+    monkeypatch.setattr(ob, "_confirm_dialog", lambda m: (_ for _ in ()).throw(AssertionError("must not prompt")))
+    live()
+    assert "ALREADY LIVE" in ob.request_live_unlock()
+
+
 # ---------- macros ----------
 STEPS = json.dumps([{"action": "click", "x": 100, "y": 100}, {"action": "write", "text": "hi"}, {"action": "press", "key": "enter"}])
 
@@ -305,7 +327,7 @@ def test_macro_dry_run_does_not_count_as_success(env):
 def test_all_tools_registered_with_current_mcp():
     names = {t.name for t in asyncio.run(ob.mcp.list_tools())}
     assert {"query_brain", "council_deliberate", "execute_pc_action", "observe_screen", "run_skill_macro",
-            "unlock_live", "lock_now", "safety_status", "forget_insight"} <= names
+            "unlock_live", "request_live_unlock", "lock_now", "safety_status", "forget_insight"} <= names
     assert "set_safety_lock" not in names
 
 
