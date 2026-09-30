@@ -15,6 +15,12 @@ sys.path.insert(0, os.path.dirname(__file__))
 sys.modules.setdefault("mouseinfo", types.ModuleType("mouseinfo"))  # pyautogui import needs tkinter on Linux
 import omni_brain_mcp as ob  # noqa: E402
 
+REAL_GET_MONITORS = ob._get_monitors
+ONE = [{"id": 1, "left": 0, "top": 0, "width": 1920, "height": 1080, "primary": True, "dpr": 1.0, "raw": None}]
+# three 1920x1080 screens; the primary is the MIDDLE one, so the left screen has negative coordinates
+THREE = [{"id": i, "left": x, "top": 0, "width": 1920, "height": 1080, "primary": x == 0, "dpr": 1.0, "raw": None}
+         for i, x in enumerate((-1920, 0, 1920), 1)]
+
 Pt = namedtuple("Pt", "x y")
 
 
@@ -61,6 +67,8 @@ def env(tmp_path, monkeypatch):
     monkeypatch.setattr(ob, "DB_PATH", str(tmp_path / "t.db"))
     gui = FakeGui()
     monkeypatch.setattr(ob, "_gui_mod", gui)
+    monkeypatch.setattr(ob, "_get_monitors", lambda g: ONE)
+    monkeypatch.setattr(ob, "_DEFAULT_FAILSAFE", None)
     monkeypatch.setattr(ob, "time", types.SimpleNamespace(**{**vars(time), "sleep": lambda s: None}))
     s = ob.Safety()
     s.unlock_code = "secret123"
@@ -88,6 +96,13 @@ def test_v1_database_migrates_in_place(tmp_path, monkeypatch):
     monkeypatch.setattr(ob, "DB_PATH", p)
     ob.init_db()
     assert json.loads(ob.query_brain("old", "semantic"))["semantic_rules"][0]["distilled_rule"] == "keep me"
+
+
+def test_init_db_creates_a_missing_data_folder(tmp_path, monkeypatch):
+    # regression: Claude Desktop starts the server before the app has ever created %APPDATA%\\OmniBrain
+    monkeypatch.setattr(ob, "DB_PATH", str(tmp_path / "not" / "yet" / "there" / "brain.db"))
+    ob.init_db()
+    assert os.path.exists(ob.DB_PATH)
 
 
 def test_auto_vacuum_really_enabled():
@@ -323,6 +338,80 @@ def test_macro_dry_run_does_not_count_as_success(env):
     assert json.loads(ob.query_brain("greet", "skill"))["skills"][0]["success_count"] == 0
 
 
+# ---------- three monitors ----------
+def test_click_on_left_monitor_with_negative_coordinates(env, monkeypatch):
+    monkeypatch.setattr(ob, "_get_monitors", lambda g: THREE)
+    live()
+    assert ob.execute_pc_action(ticket(), "click", -1000, 500) == "[OK] click"
+    assert env.calls[-1][1] == (-1000, 500)
+    assert ob.execute_pc_action(ticket(), "click", 3000, 500) == "[OK] click"     # right monitor
+
+
+@pytest.mark.parametrize("x,y", [(-1919, 1), (1, 1), (1921, 2), (-2500, 500), (-1920 + 1, 500), (5000, 5)])
+def test_three_monitor_corners_and_outside_blocked(x, y, env, monkeypatch):
+    monkeypatch.setattr(ob, "_get_monitors", lambda g: THREE)
+    live()
+    assert "[BLOCKED]" in ob.execute_pc_action(ticket(), "click", x, y) and env.calls == []
+
+
+def test_failsafe_is_armed_on_every_monitors_top_left(env, monkeypatch):
+    # pyautogui alone only watches the primary screen, so slamming the mouse into the far-left screen's
+    # corner would NOT stop the bot on a 3-screen desk
+    env.FAILSAFE_POINTS = [(0, 0), (0, 1079), (1919, 0), (1919, 1079)]  # what pyautogui computes (primary only)
+    monkeypatch.setattr(ob, "_get_monitors", lambda g: THREE)
+    ob._arm_failsafe(env)
+    assert {(-1920, 0), (0, 0), (1920, 0)} <= set(env.FAILSAFE_POINTS) and (1919, 1079) in env.FAILSAFE_POINTS
+
+
+def test_failsafe_on_left_monitor_corner_stops_the_bot(env, monkeypatch):
+    monkeypatch.setattr(ob, "_get_monitors", lambda g: THREE)
+    live()
+    env.raise_failsafe = True  # FakeGui stands in for pyautogui raising at a FAILSAFE_POINT
+    assert "EMERGENCY" in ob.execute_pc_action(ticket(), "click", -1000, 500)
+    assert json.loads(ob.safety_status())["mode"] == "DRY_RUN"
+
+
+class FakeMSS:
+    """Stands in for mss: 3 physical screens, records which rectangle was grabbed."""
+    grabbed = []
+
+    def __init__(self):
+        self.monitors = [{"left": -1920, "top": 0, "width": 5760, "height": 1080}] + [dict(m["raw_rect"]) for m in _RAW]
+
+    def __enter__(self): return self
+    def __exit__(self, *a): return False
+
+    def grab(self, rect):
+        FakeMSS.grabbed.append(dict(rect))
+        w, h = rect["width"], rect["height"]
+        return types.SimpleNamespace(size=(w, h), bgra=bytes(w * h * 4))
+
+
+_RAW = [{"raw_rect": {"left": x, "top": 0, "width": 1920, "height": 1080}} for x in (-1920, 0, 1920)]
+
+
+def test_observe_defaults_to_monitor_under_mouse_and_maps_coordinates(env, monkeypatch):
+    monkeypatch.setattr(ob, "_get_monitors", REAL_GET_MONITORS)
+    fake = types.ModuleType("mss"); fake.MSS = FakeMSS
+    monkeypatch.setitem(sys.modules, "mss", fake)
+    FakeMSS.grabbed.clear()
+    env.pos = (-1000, 500)                                    # mouse is on the LEFT screen
+    content = ob.observe_screen(max_width=960)
+    meta = json.loads(content[1])
+    assert FakeMSS.grabbed[-1]["left"] == -1920 and meta["shown"] == 1
+    assert [m["id"] for m in meta["monitors"]] == [1, 2, 3] and [m["primary"] for m in meta["monitors"]] == [False, True, False]
+    assert meta["offset"] == [-1920, 0] and meta["factor"] == 2.0  # 1920px shown at 960
+    live()
+    monkeypatch.setattr(ob, "_get_monitors", lambda g: THREE)
+    ob.execute_pc_action(ticket(), "click", 480, 270, coords="image")   # image centre -> screen centre of left monitor
+    assert env.calls[-1][1] == (-960, 540)
+    monkeypatch.setattr(ob, "_get_monitors", REAL_GET_MONITORS)
+    ob.observe_screen(monitor=3, max_width=960)
+    assert FakeMSS.grabbed[-1]["left"] == 1920 and ob.S.last_obs["off_x"] == 1920
+    ob.observe_screen(monitor=0, max_width=960)
+    assert FakeMSS.grabbed[-1]["width"] == 5760 and ob.S.last_obs["off_x"] == -1920
+
+
 # ---------- protocol ----------
 def test_all_tools_registered_with_current_mcp():
     names = {t.name for t in asyncio.run(ob.mcp.list_tools())}
@@ -336,6 +425,7 @@ def test_all_tools_registered_with_current_mcp():
 def test_real_screen_observe_and_click(monkeypatch):
     monkeypatch.setattr(ob, "_gui_mod", None)
     monkeypatch.setattr(ob, "_gui_error", None)
+    monkeypatch.setattr(ob, "_get_monitors", REAL_GET_MONITORS)
     content = ob.observe_screen(max_width=640)
     assert len(content) == 2 and content[0].data[:2] == b"\xff\xd8"  # JPEG
     meta = json.loads(content[1])

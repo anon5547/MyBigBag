@@ -17,7 +17,8 @@ Safety model (all enforced server-side, the model cannot switch them off)
    bounded action budget and a 3 minute expiry.
 3. Bounds check, dangerous-hotkey blocklist, no newline in typed text, rate limit.
 4. Yields to the human: aborts if the mouse is moving, or is not where the bot left it.
-5. pyautogui FAILSAFE (mouse to top-left corner) kills the lease and all tickets.
+5. pyautogui FAILSAFE kills the lease and all tickets. It is armed on the top-left corner of EVERY monitor
+   (pyautogui alone only watches the primary monitor's corners, which is useless on a 3-screen desk).
 
 Honest limits: `confidence_score` is self-reported by the model, so the ticket is a
 speed bump, not proof of good judgement. A model with filesystem access could read
@@ -67,7 +68,8 @@ TICKET_TTL_S = 180.0
 MAX_TICKET_BUDGET = 25
 DEFAULT_LEASE_MIN, MAX_LEASE_MIN = 10, 60
 MAX_ACTIONS_PER_MIN = int(os.environ.get("OMNI_MAX_ACTIONS_PER_MIN", "60"))
-EDGE_MARGIN_PX = 3               # keeps clicks off the (0,0) fail-safe corner and screen edges
+EDGE_MARGIN_PX = 3               # clicks must land this far inside a monitor
+CORNER_GUARD_PX = 8              # ...and this far from any fail-safe corner
 HUMAN_MOVE_TOL_PX = 4
 MAX_TEXT_LEN = 500
 WEB_CACHE_TTL_S = 24 * 3600
@@ -120,16 +122,73 @@ def _gui() -> Any:
     global _gui_mod, _gui_error
     if _gui_mod is None and _gui_error is None:
         try:
+            if sys.platform == "win32":
+                # Must happen BEFORE pyautogui imports (it would pick the weaker system-DPI mode): with
+                # per-monitor awareness, screenshot pixels == cursor coordinates on every monitor,
+                # even when the monitors use different scaling (125% / 150% ...).
+                try:
+                    import ctypes
+
+                    ctypes.windll.shcore.SetProcessDpiAwareness(2)
+                except Exception:
+                    pass
             import pyautogui
 
             pyautogui.FAILSAFE = True
             pyautogui.PAUSE = 0.12
             _gui_mod = pyautogui
+            _arm_failsafe(pyautogui)
         except BaseException as e:  # pyautogui can even SystemExit without a display
             _gui_error = f"{type(e).__name__}: {e}"
     if _gui_mod is None:
         raise RuntimeError(f"GUI unavailable ({_gui_error})")
     return _gui_mod
+
+
+def _get_monitors(gui: Any) -> List[Dict[str, Any]]:
+    """Monitors in cursor coordinates (may be negative: a monitor left of the primary has left < 0).
+    Each dict: id, left, top, width, height, primary, dpr, raw (the mss rectangle in physical pixels)."""
+    sw, sh = gui.size()
+    try:
+        import mss
+
+        with (getattr(mss, "MSS", None) or mss.mss)() as sct:
+            raw = [dict(m) for m in sct.monitors[1:]]
+    except Exception:
+        raw = []
+    if not raw:
+        return [{"id": 1, "left": 0, "top": 0, "width": sw, "height": sh, "primary": True, "dpr": 1.0, "raw": None}]
+    prim = next((m for m in raw if m["left"] <= 0 < m["left"] + m["width"] and m["top"] <= 0 < m["top"] + m["height"]), raw[0])
+    dpr = prim["width"] / sw if sw else 1.0  # 2.0 on a Retina Mac, 1.0 when DPI-aware on Windows
+    return [{"id": i, "left": round(m["left"] / dpr), "top": round(m["top"] / dpr), "width": round(m["width"] / dpr),
+             "height": round(m["height"] / dpr), "primary": m is prim, "dpr": dpr, "raw": m} for i, m in enumerate(raw, 1)]
+
+
+_DEFAULT_FAILSAFE: Optional[List[Tuple[int, int]]] = None
+
+
+def _failsafe_points(mons: List[Dict[str, Any]]) -> List[Tuple[int, int]]:
+    return [(m["left"], m["top"]) for m in mons]
+
+
+def _arm_failsafe(gui: Any, mons: Optional[List[Dict[str, Any]]] = None) -> None:
+    global _DEFAULT_FAILSAFE
+    if _DEFAULT_FAILSAFE is None:
+        _DEFAULT_FAILSAFE = list(getattr(gui, "FAILSAFE_POINTS", [(0, 0)]))
+    pts = set(_DEFAULT_FAILSAFE) | set(_failsafe_points(mons or _get_monitors(gui)))
+    gui.FAILSAFE_POINTS = sorted(pts)
+
+
+def _point_ok(x: int, y: int, mons: List[Dict[str, Any]]) -> Optional[str]:
+    """None if (x, y) is a safe click target, else the reason."""
+    for fx, fy in _failsafe_points(mons):
+        if abs(x - fx) < CORNER_GUARD_PX and abs(y - fy) < CORNER_GUARD_PX:
+            return "too close to a fail-safe corner"
+    m = EDGE_MARGIN_PX
+    if any(mm["left"] + m <= x < mm["left"] + mm["width"] - m and mm["top"] + m <= y < mm["top"] + mm["height"] - m for mm in mons):
+        return None
+    return "outside every monitor"
+
 
 
 # =====================================================================
@@ -158,6 +217,8 @@ def _ensure_column(conn, table: str, column: str, ddl: str) -> None:
 
 
 def init_db() -> None:
+    # Claude Desktop may start this server before the app ever ran, so the data folder may not exist yet.
+    os.makedirs(os.path.dirname(os.path.abspath(DB_PATH)), exist_ok=True)
     # auto_vacuum only takes effect on a fresh file or after one VACUUM. v1 claimed it without setting it.
     raw = sqlite3.connect(DB_PATH, isolation_level=None)
     try:
@@ -532,25 +593,36 @@ def council_deliberate(goal: str, iq_strategy: str, risk_assessment: str, eq_hum
 # ---------------------------------------------------------------------
 @tool(readOnlyHint=True)
 def observe_screen(region_x: int = 0, region_y: int = 0, width: int = 0, height: int = 0,
-                   max_width: int = 1280, ocr: bool = False) -> list:
-    """Screenshot (downscaled JPEG) + mouse/screen info. Coordinates in the image can be used with
-    execute_pc_action(coords='image'). Region is in screen coordinates. OCR is off by default (slow)."""
+                   max_width: int = 1280, ocr: bool = False, monitor: int = -1) -> list:
+    """Screenshot (downscaled JPEG) + mouse/monitor info. monitor: -1 = the monitor under the mouse (default),
+    1..N = that monitor, 0 = all monitors stitched. Coordinates in the image can be used with
+    execute_pc_action(coords='image'). A region (screen coordinates) overrides monitor. OCR is off by default."""
     try:
         gui = _gui()
         import mss
         from PIL import Image as PILImage
 
-        sw, sh = gui.size()
+        mons = _get_monitors(gui)
+        _arm_failsafe(gui, mons)  # monitor layout may have changed since start-up
         mx, my = gui.position()[0], gui.position()[1]
+        dpr = mons[0]["dpr"]
         with (getattr(mss, "MSS", None) or mss.mss)() as sct:  # mss.mss is deprecated in new releases
-            prim = sct.monitors[1]
-            dpr = prim["width"] / sw  # 2.0 on Retina, 1.0 on DPI-aware Windows
             if width > 0 and height > 0:
-                mon = {"left": int(region_x * dpr), "top": int(region_y * dpr), "width": int(width * dpr), "height": int(height * dpr)}
-                off_x, off_y = region_x, region_y
+                chosen, off_x, off_y = 0, region_x, region_y
+                grab = {"left": int(region_x * dpr), "top": int(region_y * dpr), "width": int(width * dpr), "height": int(height * dpr)}
+            elif monitor == 0 and len(mons) > 1:
+                chosen = 0
+                grab = dict(sct.monitors[0])
+                off_x, off_y = round(grab["left"] / dpr), round(grab["top"] / dpr)
             else:
-                mon, off_x, off_y = prim, 0, 0
-            shot = sct.grab(mon)
+                if monitor >= 1:
+                    pick = next((m for m in mons if m["id"] == monitor), None) or mons[0]
+                else:
+                    pick = next((m for m in mons if m["left"] <= mx < m["left"] + m["width"] and m["top"] <= my < m["top"] + m["height"]),
+                                next((m for m in mons if m["primary"]), mons[0]))
+                chosen, off_x, off_y = pick["id"], pick["left"], pick["top"]
+                grab = pick["raw"] or {"left": 0, "top": 0, "width": pick["width"], "height": pick["height"]}
+            shot = sct.grab(grab)
         img = PILImage.frombytes("RGB", shot.size, shot.bgra, "raw", "BGRX")
         scale = max(1.0, img.width / max(320, max_width))
         if scale > 1:
@@ -558,7 +630,8 @@ def observe_screen(region_x: int = 0, region_y: int = 0, width: int = 0, height:
         S.last_obs = {"off_x": off_x, "off_y": off_y, "factor": scale / dpr}
         buf = _jpeg(img)
         meta: Dict[str, Any] = {
-            "screen": [sw, sh], "image": [img.width, img.height], "mouse": [mx, my],
+            "monitors": [{"id": m["id"], "x": m["left"], "y": m["top"], "w": m["width"], "h": m["height"], "primary": m["primary"]} for m in mons],
+            "shown": chosen or "all", "image": [img.width, img.height], "mouse": [mx, my],
             "image_to_screen": "screen = offset + image_px * factor", "offset": [off_x, off_y], "factor": round(scale / dpr, 4),
             **_status(),
         }
@@ -697,12 +770,16 @@ def _run_step(raw: Dict[str, Any], ticket_id: str, coords: str = "screen", consu
             return "blocked", f"[BLOCKED] {err}"
         try:
             gui = _gui()
-            sw, sh = gui.size()
+            mons = _get_monitors(gui)
         except Exception as e:
             return "error", f"[ERROR] {e}"
-        if "x" in step and not (EDGE_MARGIN_PX <= step["x"] < sw - EDGE_MARGIN_PX and EDGE_MARGIN_PX <= step["y"] < sh - EDGE_MARGIN_PX):
-            return "blocked", f"[BLOCKED] ({step['x']},{step['y']}) outside safe area of {sw}x{sh}"
+        if "x" in step:
+            why = _point_ok(step["x"], step["y"], mons)
+            if why:
+                return "blocked", f"[BLOCKED] ({step['x']},{step['y']}) {why}"
         live = S.is_live
+        if live:
+            _arm_failsafe(gui, mons)
         if live and step["action"] != "wait":
             now = time.monotonic()
             while S.action_times and now - S.action_times[0] > 60:
