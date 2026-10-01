@@ -30,7 +30,7 @@ HERE = Path(__file__).resolve().parent
 IS_WIN = sys.platform == "win32"
 
 CORE_PACKAGES = ["mcp", "pyautogui", "mss", "pillow", "pyperclip"]   # the app cannot work without these
-OPTIONAL_PACKAGES = ["pywebview", "keyring"]                         # native window / Credential Manager
+OPTIONAL_PACKAGES = ["pywebview", "keyring", "playwright"]                         # native window / Credential Manager
 VERIFY_IMPORTS = ["mss", "PIL", "mcp", "pyperclip", "pyautogui"]
 
 Log = Callable[[str], None]
@@ -267,7 +267,7 @@ def install(opts: Options, log: Log = print) -> Dict[str, object]:
         for pkg in OPTIONAL_PACKAGES:
             log(f"ติดตั้งตัวเสริม {pkg}…")
             if _run(pip + [pkg], log) != 0:
-                warnings.append(f"ติดตั้ง {pkg} ไม่สำเร็จ (ข้ามได้: " + ("แอปจะเปิดในเบราว์เซอร์แทนหน้าต่างเฉพาะ" if pkg == "pywebview" else "คีย์ API จะถูกเก็บในไฟล์แทน") + ")")
+                warnings.append(f"ติดตั้ง {pkg} ไม่สำเร็จ (ข้ามได้: " + ({"pywebview": "แอปจะเปิดในเบราว์เซอร์แทนหน้าต่างเฉพาะ", "keyring": "คีย์ API จะถูกเก็บในไฟล์แทน", "playwright": "ปุ่ม “เรียนรู้จาก Wiki” จะใช้อัปเดตไม่ได้ แต่ความรู้ที่มากับตัวติดตั้งยังใช้ได้"}[pkg]) + ")")
         log("ตรวจสอบไลบรารี…")
         code = "import " + ", ".join(VERIFY_IMPORTS)
         if _run([str(vpy), "-c", code], log, 120) != 0:

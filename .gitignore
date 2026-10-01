@@ -16,3 +16,7 @@ venv/
 # metaeditor build output
 *.ex5
 *.log
+
+# game-wiki snapshot (third-party text; delivered inside the installer zip, not committed) and build output
+omni_brain/knowledge/
+release/

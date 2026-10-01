@@ -7,6 +7,7 @@ Local-only web UI (127.0.0.1, random port). Every API call needs a per-launch to
 Host/Origin, so a web page you happen to visit cannot drive your mouse through this server.
 """
 import argparse
+import glob
 import json
 import os
 import secrets
@@ -113,6 +114,8 @@ class Settings:
 
 # ---------------------------------------------------------------- app state
 class App:
+    LEARN_COMMANDS = ("/learn", "/เรียนรู้")
+
     def __init__(self) -> None:
         self.settings = Settings()
         self.events: Deque[Dict[str, Any]] = deque(maxlen=600)
@@ -122,6 +125,8 @@ class App:
         self.agent = Agent(self.settings.cfg, self.settings.key, self.emit)
         self.token = secrets.token_urlsafe(24)
         self.port = 0
+        self.kb_lock = threading.Lock()
+        self.kb_state: Dict[str, Any] = {"running": False, "msg": "", "error": None}
         self.last_usage: Dict[str, Any] = {"prompt": 0, "completion": 0, "cached": 0, "calls": 0, "cost": 0.0}
 
     def emit(self, ev: Dict[str, Any]) -> None:
@@ -137,7 +142,55 @@ class App:
         with self.ev_lock:
             return [e for e in self.events if e["id"] > after]
 
+    # ---- game knowledge base (wiki) ------------------------------------------
+    def start_learn(self, url: str = "") -> bool:
+        """Human-triggered (button or /เรียนรู้): render the wiki in a browser and replace the stored copy."""
+        if not self.kb_lock.acquire(blocking=False):
+            return False
+        url = (url or self.settings.cfg().get("kb_url") or "").strip()
+        self.kb_state = {"running": True, "msg": "เริ่มเรียนรู้…", "error": None}
+
+        def progress(m: str) -> None:
+            self.kb_state["msg"] = m
+
+        def run() -> None:
+            try:
+                import wiki_ingest
+
+                snap = wiki_ingest.capture([url], progress)
+                n = ob.kb.replace_source(snap["source"], snap["url"], snap["docs"])
+                self.kb_state = {"running": False, "error": None, "msg": f"เรียนรู้เสร็จ: {n['docs']} รายการ ({n['chunks']} ส่วน)"}
+                self.emit({"type": "notice", "text": "📚 " + self.kb_state["msg"]})
+            except Exception as e:
+                self.kb_state = {"running": False, "msg": "", "error": f"{e}"[:300]}
+                self.emit({"type": "error", "text": f"เรียนรู้ไม่สำเร็จ: {e}"[:400]})
+            finally:
+                self.kb_lock.release()
+
+        threading.Thread(target=run, daemon=True).start()
+        return True
+
+    def import_bundled_snapshot(self) -> int:
+        """First start (or empty base): load the knowledge shipped inside the installer, no browser needed."""
+        if ob.kb.status():
+            return 0
+        n = 0
+        for path in sorted(glob.glob(os.path.join(HERE, "knowledge", "*.json"))):
+            try:
+                n += ob.kb.import_snapshot(path)["docs"]
+            except Exception:
+                pass
+        return n
+
     def start_chat(self, text: str) -> bool:
+        cmd = text.strip().split(None, 1)
+        if cmd and cmd[0].lower() in self.LEARN_COMMANDS:  # handled locally: zero model tokens
+            self.emit({"type": "user", "text": text})
+            if not self.start_learn(cmd[1] if len(cmd) > 1 and cmd[1].startswith("http") else ""):
+                self.emit({"type": "notice", "text": "กำลังเรียนรู้อยู่แล้ว รอให้เสร็จก่อน"})
+            else:
+                self.emit({"type": "notice", "text": "📚 เริ่มเรียนรู้จาก Wiki (ดูความคืบหน้าในแท็บ “ความรู้”)"})
+            return True
         if not self.busy.acquire(blocking=False):
             return False
         self.emit({"type": "user", "text": text})
@@ -189,6 +242,7 @@ class App:
             "settings": {**self.settings.cfg(), "preset": self.settings.preset, "has_key": bool(self.settings.key())},
             "presets": PRESETS, "status": st, "usage": self.last_usage, "busy": self.busy.locked(),
             "skills": self.skills(), "max_lease": ob.MAX_LEASE_MIN,
+            "kb": {"sources": ob.kb.status(), **self.kb_state},
         }
 
 
@@ -285,6 +339,15 @@ class Handler(BaseHTTPRequestHandler):
                 return self._json({"ok": True})
             if p == "/api/skill/run":
                 return self._json(APP.run_skill_by_human(str(data.get("name", ""))))
+            if p == "/api/kb/learn":
+                ok = APP.start_learn(str(data.get("url", "")))
+                return self._json({"ok": ok, "running": not ok})
+            if p == "/api/kb/search":
+                import wiki_kb
+
+                q, tab = str(data.get("q", ""))[:200], str(data.get("tab", ""))[:40]
+                res = ob.kb.search(q, tab, int(data.get("n", 4))) if q.strip() else []
+                return self._json({"results": res, "chars": len(wiki_kb.format_results(res))})
             if p == "/api/selftest":
                 return self._json(selftest(APP.settings.cfg(), APP.settings.key()))
         except Exception as e:
@@ -308,6 +371,9 @@ def main() -> None:
     args = ap.parse_args()
     ob.init_db()
     srv = make_server(args.port)
+    got = APP.import_bundled_snapshot()
+    if got:
+        print(f"นำเข้าความรู้ที่มากับตัวติดตั้ง: {got} รายการ")
     url = f"http://127.0.0.1:{APP.port}/"
     threading.Thread(target=srv.serve_forever, daemon=True).start()
     print(f"OmniBrain running at {url}  (data: {HOME})")

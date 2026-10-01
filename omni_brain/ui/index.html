@@ -168,7 +168,7 @@ input:focus,select:focus{border-color:var(--accent)}
 
 <div id="scrim"></div>
 <aside id="drawer" aria-label="ตั้งค่า">
-  <div class="tabs"><button class="tab on" data-p="p1">ตั้งค่า</button><button class="tab" data-p="p2">สกิล</button><span class="spacer"></span><button class="btn icon" id="closeDrawer" aria-label="ปิด">✕</button></div>
+  <div class="tabs"><button class="tab on" data-p="p1">ตั้งค่า</button><button class="tab" data-p="p2">สกิล</button><button class="tab" data-p="p3">ความรู้</button><span class="spacer"></span><button class="btn icon" id="closeDrawer" aria-label="ปิด">✕</button></div>
   <div class="pane on" id="p1">
     <label for="preset">ค่าย API (รองรับแบบ OpenAI-compatible)</label>
     <select id="preset"></select>
@@ -190,6 +190,17 @@ input:focus,select:focus{border-color:var(--accent)}
     </div>
     <div class="actions"><button class="btn primary" id="save">บันทึก</button><button class="btn" id="test">ทดสอบโมเดล</button></div>
     <div class="result" id="testOut" style="display:none"></div>
+  </div>
+  <div class="pane" id="p3">
+    <p class="hint" style="margin:0 0 10px">ให้ AI อ่าน Wiki ของเกมเก็บไว้ในเครื่อง แล้วตอบคำถามเรื่องเกมโดยค้นเฉพาะส่วนที่เกี่ยวข้อง (ประหยัดโทเคน ไม่ต้องยัดทั้ง Wiki เข้าแชท)</p>
+    <div id="kbStatus"></div>
+    <label for="kb_url">ที่อยู่ Wiki ของเกม</label><input id="kb_url" spellcheck="false">
+    <div class="actions"><button class="btn primary" id="kbLearn">เรียนรู้ / อัปเดตจาก Wiki</button></div>
+    <div class="result" id="kbMsg" style="display:none"></div>
+    <div class="hint">หรือพิมพ์ <b>/เรียนรู้</b> ในช่องแชท ต้องมี Microsoft Edge หรือ Chrome ในเครื่อง ระบบเปิดหน้าเว็บ 1 ครั้งแบบผู้เข้าชม และเคารพ robots.txt</div>
+    <label for="kbq">ลองค้นในฐานความรู้</label><input id="kbq" placeholder="เช่น Tempest Drake, ตีบวก, สตัน" spellcheck="false">
+    <div id="kbRes"></div>
+    <div class="result" style="margin-top:16px;color:var(--live)">⚠ ข้อตกลงของ Lumivara Online ห้ามใช้โปรแกรมช่วยเล่น บอท หรือมาโคร นอกเหนือจากระบบ Auto Play ของเกม — ใช้ความรู้นี้เพื่อ <b>ถามตอบและวางแผน</b> เท่านั้น อย่าให้ AI ควบคุมเมาส์/คีย์บอร์ดเล่นเกมนี้แทน เสี่ยงถูกระงับบัญชีถาวร</div>
   </div>
   <div class="pane" id="p2">
     <p class="hint" style="margin:0 0 6px">สกิลที่ AI บันทึกไว้ กด “เล่น” เพื่อรันซ้ำโดยไม่เสียโทเคนเลย (ต้องปลดล็อกก่อนจึงจะทำจริง)</p>
@@ -244,7 +255,7 @@ function fillSettings(s){
   const cfg=s.settings;
   $("preset").innerHTML="";s.presets.forEach(p=>{const o=el("option","",p.name);o.value=p.id;$("preset").append(o)});
   $("preset").value=cfg.preset;
-  for(const k of ["base_url","model","price_in","price_out","image_width","history_turns","max_steps"])$(k).value=cfg[k];
+  for(const k of ["base_url","model","price_in","price_out","image_width","history_turns","max_steps","kb_url"])$(k).value=cfg[k];
   $("keyHint").textContent=cfg.has_key?"บันทึกคีย์ไว้แล้ว (เว้นว่างถ้าไม่เปลี่ยน)":"ยังไม่มีคีย์ — เก็บไว้ในเครื่องคุณเท่านั้น";
 }
 let settingsFilled=false;
@@ -260,7 +271,7 @@ async function refresh(){
     const u=st.usage;$("mIn").textContent=fmt(u.prompt);$("mOut").textContent=fmt(u.completion);$("mCache").textContent=fmt(u.cached);$("mCalls").textContent=fmt(u.calls);
     $("mCost").textContent=(st.settings.price_in||st.settings.price_out)?"$"+u.cost.toFixed(u.cost<0.01?5:3):"—";
     if(!hasMsgs)renderEmpty();
-    renderSkills();
+    renderSkills();renderKb();
   }catch(e){}
   setTimeout(refresh,1200);
 }
@@ -271,6 +282,23 @@ function tick(){
 }
 setInterval(tick,500);
 
+function renderKb(){
+  if(!st||!st.kb)return;const k=st.kb,box=$("kbStatus");box.textContent="";
+  if(!k.sources.length)box.append(el("p","hint","ยังไม่มีความรู้ในเครื่อง — กดปุ่มด้านล่างเพื่อเริ่มเรียนรู้"));
+  k.sources.forEach(x=>{const d=el("div","skill"),i=el("div");i.append(el("strong","",x.source),el("small","",`${x.docs} รายการ · ${x.chunks} ส่วน · อัปเดต ${x.updated_at.replace("T"," ")}`));d.append(i);box.append(d)});
+  const m=$("kbMsg");$("kbLearn").disabled=k.running;
+  if(k.running||k.msg||k.error){m.style.display="block";m.className="result "+(k.error?"bad":(k.running?"":"ok"));m.textContent=k.error?("ไม่สำเร็จ: "+k.error):(k.running?"⏳ ":"✓ ")+k.msg}
+}
+let kbTimer=null;
+async function kbSearch(){
+  const q=$("kbq").value.trim(),box=$("kbRes");box.textContent="";if(!q)return;
+  const r=await api("/api/kb/search",{q,n:5});
+  if(!r.results.length){box.append(el("p","hint","ไม่พบ"));return}
+  r.results.forEach(x=>{const d=el("div","skill"),i=el("div");i.append(el("strong","",x.title),el("small","",`${x.tab} · ${x.text.replace(/\s+/g," ").slice(0,150)}…`));d.append(i);box.append(d)});
+  box.append(el("p","hint",`ถ้า AI ค้นคำนี้ จะได้ข้อความรวม ~${fmt(r.chars)} ตัวอักษรต่อครั้ง`));
+}
+$("kbq").addEventListener("input",()=>{clearTimeout(kbTimer);kbTimer=setTimeout(kbSearch,350)});
+$("kbLearn").onclick=async()=>{await saveSettings();await api("/api/kb/learn",{});refresh()};
 function renderSkills(){
   if(!st)return;const box=$("skills");const sig=JSON.stringify(st.skills)+st.status.mode;if(box.dataset.sig===sig)return;box.dataset.sig=sig;box.textContent="";
   if(!st.skills.length){box.append(el("p","hint","ยังไม่มีสกิล — เมื่อ AI ทำงานสำเร็จ มันจะบันทึกไว้ที่นี่"));return}
@@ -305,7 +333,7 @@ document.querySelectorAll(".tab").forEach(t=>t.onclick=()=>{document.querySelect
 $("preset").onchange=()=>{const p=st.presets.find(x=>x.id===$("preset").value);if(p&&p.base_url)$("base_url").value=p.base_url};
 async function saveSettings(){
   const b={preset:$("preset").value};
-  for(const k of ["base_url","model","price_in","price_out","image_width","history_turns","max_steps"])b[k]=$(k).value;
+  for(const k of ["base_url","model","price_in","price_out","image_width","history_turns","max_steps","kb_url"])b[k]=$(k).value;
   if($("api_key").value)b.api_key=$("api_key").value;
   const r=await api("/api/settings",b);$("api_key").value="";st=r.state;settingsFilled=false;fillSettings(st);settingsFilled=true;if(!hasMsgs)renderEmpty();
 }

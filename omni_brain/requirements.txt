@@ -4,5 +4,6 @@ mss
 pillow
 pyperclip         # types Thai / any non-ASCII text
 pywebview         # native window (Edge WebView2 on Win10/11); without it the app opens in your browser
+playwright        # lets the app render a JS wiki to learn it (uses Edge/Chrome already installed)
 keyring           # optional: keeps the API key in Windows Credential Manager instead of a file
 # pytesseract     # optional: look(ocr=true); the model can already read screenshots

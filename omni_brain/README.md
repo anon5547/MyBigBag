@@ -15,6 +15,18 @@ python app.py            # native window if pywebview is installed, else your br
 Settings (gear icon): pick a provider, paste a model name and key, press **ทดสอบโมเดล**. The test
 reads a generated image, so you learn in seconds whether the model can really see the screen.
 
+## Game knowledge (wiki)
+* `wiki_kb.py` stores a game wiki in the same SQLite file (FTS5 trigram index: Thai works without word
+  segmentation). `wiki_ingest.py` renders a JS wiki in Edge/Chrome via Playwright and saves it - one page load,
+  robots.txt honoured, `/api/` never touched.
+* The model gets one tool, `wiki(query, tab)`, returning ~1-3k tokens of the best chunks. The whole wiki is far too
+  big for a prompt (Lumivara: ~550k characters, ~300k tokens), so search is the only workable design.
+* App: tab **ความรู้** (status, learn button, test search) or type `/เรียนรู้` in the chat (zero model tokens).
+  Claude Desktop gets the same data through the MCP tool `wiki_search`.
+* A snapshot in `knowledge/*.json` is imported on first start so it works before any live learning.
+* Wiki text is untrusted reference data and is labelled so in every result.
+* Lumivara's terms forbid bots/macros other than the in-game Auto Play: use this for Q&A and planning only.
+
 ## Several monitors
 * The model sees **one** monitor per screenshot (default: the one under the mouse) to save tokens; it can ask for
   monitor 1..N or all stitched together. Coordinates on monitors left of / above the primary are negative - handled.

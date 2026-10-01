@@ -11,7 +11,7 @@ SRC = ROOT / "omni_brain"
 INST = ROOT / "installer"
 OUT = ROOT / "release" / "OmniBrain-Setup.zip"
 TOP = "OmniBrain-Setup"
-APP_FILES = ["omni_brain_mcp.py", "agent.py", "app.py", "requirements.txt", "README.md", "ui/index.html"]
+APP_FILES = ["omni_brain_mcp.py", "agent.py", "app.py", "wiki_kb.py", "wiki_ingest.py", "requirements.txt", "README.md", "ui/index.html"]
 INSTALLER_FILES = ["Install.bat", "Uninstall.bat", "setup.py", "README-ติดตั้ง.txt"]
 
 
@@ -49,6 +49,8 @@ def main() -> None:
             z.write(INST / name, f"{TOP}/{name}")
         for name in APP_FILES:
             z.write(SRC / name, f"{TOP}/app/{name}")
+        for snap in sorted((SRC / "knowledge").glob("*.json")):  # optional game-knowledge snapshots (not kept in git)
+            z.write(snap, f"{TOP}/app/knowledge/{snap.name}")
         z.writestr(f"{TOP}/app/omnibrain.ico", make_icon())
         z.writestr(f"{TOP}/app/BUILD.txt", f"OmniBrain build {git_rev()}\n")
     print(f"wrote {OUT} ({OUT.stat().st_size / 1024:.0f} KB)")

@@ -33,8 +33,17 @@ def S(release):
 def test_zip_has_everything_and_nothing_extra(release):
     names = {p.relative_to(release).as_posix() for p in release.rglob("*") if p.is_file()}
     assert {"Install.bat", "Uninstall.bat", "setup.py", "README-ติดตั้ง.txt", "app/app.py", "app/agent.py",
-            "app/omni_brain_mcp.py", "app/ui/index.html", "app/omnibrain.ico", "app/requirements.txt"} <= names
+            "app/omni_brain_mcp.py", "app/ui/index.html", "app/omnibrain.ico", "app/requirements.txt",
+            "app/wiki_kb.py", "app/wiki_ingest.py"} <= names
     assert not [n for n in names if "test_" in n or n.endswith((".db", ".pyc"))]
+
+
+def test_bundled_knowledge_snapshot_is_valid_and_importable(release):
+    snaps = sorted((release / "app" / "knowledge").glob("*.json"))
+    if not snaps:
+        pytest.skip("no snapshot in omni_brain/knowledge (it is generated locally, not committed)")
+    snap = json.loads(snaps[0].read_text(encoding="utf-8"))
+    assert snap["source"] and snap["docs"] and {"tab", "title", "text"} <= set(snap["docs"][0])
 
 
 def test_bat_files_are_ascii_crlf_and_readme_has_bom(release):
