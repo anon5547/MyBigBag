@@ -184,6 +184,11 @@ input:focus,select:focus{border-color:var(--accent)}
     <div class="hint">กรอกเพื่อให้ตัวนับค่าใช้จ่ายแสดงเป็นดอลลาร์ (เว้น 0 = แสดงแต่จำนวนโทเคน)</div>
     <label for="image_width">ความกว้างภาพหน้าจอ (เล็ก = ประหยัดโทเคน)</label>
     <select id="image_width"><option value="768">768 — ประหยัดสุด</option><option value="1024">1024 — แนะนำ</option><option value="1280">1280 — ละเอียด</option></select>
+    <label for="ui_browser">เปิดหน้าแอปด้วย (มีผลเมื่อเปิดแอปครั้งถัดไป)</label><select id="ui_browser"></select>
+    <label for="ingest_browser">เบราว์เซอร์ที่ใช้อ่าน Wiki ตอนเรียนรู้</label><select id="ingest_browser"></select>
+    <div class="hint">เบราว์เซอร์ตระกูล Chromium (Edge, Chrome, Brave, Vivaldi, Opera) ใช้ได้ทั้งหมด Firefox ต้องรัน <b>playwright install firefox</b> ก่อน</div>
+    <label>เปิดหน้านี้เพิ่มในเบราว์เซอร์อื่นตอนนี้ (เปิดพร้อมกันหลายตัวได้)</label>
+    <div id="openBtns" style="display:flex;flex-wrap:wrap;gap:8px"></div>
     <div class="row">
       <div><label for="history_turns">จำบทสนทนา (รอบ)</label><input id="history_turns" type="number" min="1" max="30"></div>
       <div><label for="max_steps">ขั้นตอนสูงสุด/ข้อความ</label><input id="max_steps" type="number" min="1" max="40"></div>
@@ -255,8 +260,20 @@ function fillSettings(s){
   const cfg=s.settings;
   $("preset").innerHTML="";s.presets.forEach(p=>{const o=el("option","",p.name);o.value=p.id;$("preset").append(o)});
   $("preset").value=cfg.preset;
-  for(const k of ["base_url","model","price_in","price_out","image_width","history_turns","max_steps","kb_url"])$(k).value=cfg[k];
+  fillBrowsers(s.browsers||[],cfg);
+  for(const k of ["base_url","model","price_in","price_out","image_width","history_turns","max_steps","kb_url","ui_browser","ingest_browser"])$(k).value=cfg[k];
   $("keyHint").textContent=cfg.has_key?"บันทึกคีย์ไว้แล้ว (เว้นว่างถ้าไม่เปลี่ยน)":"ยังไม่มีคีย์ — เก็บไว้ในเครื่องคุณเท่านั้น";
+}
+function fillBrowsers(list,cfg){
+  const opt=(v,t)=>{const o=el("option","",t);o.value=v;return o};
+  const ui=$("ui_browser"),ig=$("ingest_browser"),box=$("openBtns");ui.textContent="";ig.textContent="";box.textContent="";
+  ui.append(opt("auto","อัตโนมัติ"),opt("pywebview","หน้าต่างแอป (pywebview)"),opt("default","เบราว์เซอร์เริ่มต้นของระบบ"));
+  ig.append(opt("auto","อัตโนมัติ (Edge → Chrome → ตัวอื่น)"));
+  list.forEach(b=>{ui.append(opt(b.id,b.name));if(b.family==="chromium")ig.append(opt(b.id,b.name));
+    const btn=el("button","btn",b.name);btn.onclick=async()=>{btn.disabled=true;try{await api("/api/open-browser",{id:b.id})}catch(e){}btn.disabled=false};box.append(btn)});
+  ig.append(opt("firefox","Firefox (ต้อง playwright install firefox)"));
+  if(!list.length)box.append(el("span","hint","ไม่พบเบราว์เซอร์ที่รู้จักในเครื่อง"));
+  const d=el("button","btn","ค่าเริ่มต้นของระบบ");d.onclick=()=>api("/api/open-browser",{id:"default"}).catch(()=>{});box.append(d);
 }
 let settingsFilled=false;
 async function refresh(){
@@ -333,7 +350,7 @@ document.querySelectorAll(".tab").forEach(t=>t.onclick=()=>{document.querySelect
 $("preset").onchange=()=>{const p=st.presets.find(x=>x.id===$("preset").value);if(p&&p.base_url)$("base_url").value=p.base_url};
 async function saveSettings(){
   const b={preset:$("preset").value};
-  for(const k of ["base_url","model","price_in","price_out","image_width","history_turns","max_steps","kb_url"])b[k]=$(k).value;
+  for(const k of ["base_url","model","price_in","price_out","image_width","history_turns","max_steps","kb_url","ui_browser","ingest_browser"])b[k]=$(k).value;
   if($("api_key").value)b.api_key=$("api_key").value;
   const r=await api("/api/settings",b);$("api_key").value="";st=r.state;settingsFilled=false;fillSettings(st);settingsFilled=true;if(!hasMsgs)renderEmpty();
 }

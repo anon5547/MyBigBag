@@ -69,23 +69,51 @@ JS_SKILL_LEVELS = r"""card => {
 }"""
 
 
-def launch_browser(p: Any) -> Any:
-    """Prefer the Edge/Chrome already on the machine; OMNI_BROWSER_PATH overrides (testing / custom installs)."""
+def launch_browser(p: Any, choice: str = "auto", detected: Optional[List[Dict[str, str]]] = None) -> Any:
+    """Start a browser for rendering.
+    choice: 'auto' (Edge -> Chrome -> any other installed Chromium-family browser -> Playwright's own Chromium),
+    a browser id from browsers.detect() ('edge', 'chrome', 'brave', 'vivaldi', 'opera', 'chromium'),
+    or 'firefox' (needs Playwright's own Firefox build: `playwright install firefox`).
+    OMNI_BROWSER_PATH overrides everything (testing / unusual installs)."""
+    import browsers
+
     args = os.environ.get("OMNI_BROWSER_ARGS", "").split()
     path = os.environ.get("OMNI_BROWSER_PATH")
     if path:
         return p.chromium.launch(executable_path=path, args=args)
-    last: Optional[Exception] = None
-    for channel in ("msedge", "chrome"):
+    choice = (choice or "auto").lower()
+    found = detected if detected is not None else browsers.detect()
+    chromium_family = [b for b in found if b["family"] == browsers.CHROMIUM]
+    tried: List[str] = []
+    if choice == "firefox":
+        try:
+            return p.firefox.launch()
+        except Exception as e:
+            raise IngestError("Firefox ต้องใช้ตัว Firefox ของ Playwright ติดตั้งด้วย `playwright install firefox` "
+                              f"(Playwright ควบคุม Firefox ที่ติดตั้งในเครื่องโดยตรงไม่ได้) — {str(e)[:120]}") from e
+    if choice != "auto":
+        pick = next((b for b in chromium_family if b["id"] == choice), None)
+        if not pick:
+            raise IngestError(f"ไม่พบเบราว์เซอร์ “{choice}” ในเครื่องนี้ (หรือไม่ใช่ตระกูล Chromium) — เลือก “อัตโนมัติ” หรือเบราว์เซอร์อื่น")
+        return p.chromium.launch(executable_path=pick["path"], args=args)
+    for channel in ("msedge", "chrome"):  # Playwright knows where these live
         try:
             return p.chromium.launch(channel=channel, args=args)
-        except Exception as e:  # not installed
-            last = e
+        except Exception as e:
+            tried.append(channel)
+    for b in chromium_family:  # Brave, Vivaldi, Opera, Chromium ...
+        if b["id"] in ("edge", "chrome"):
+            continue
+        try:
+            return p.chromium.launch(executable_path=b["path"], args=args)
+        except Exception:
+            tried.append(b["id"])
     try:
         return p.chromium.launch(args=args)
     except Exception as e:
-        raise IngestError("ไม่พบ Microsoft Edge / Chrome ให้เปิดหน้าเว็บ (Windows 10/11 มี Edge มาให้ปกติ) "
-                          f"หรือรัน `playwright install chromium` — {last or e}") from e
+        raise IngestError("ไม่พบเบราว์เซอร์ที่ใช้เรนเดอร์ได้ (ลองแล้ว: " + ", ".join(tried + ["chromium ของ Playwright"]) + "). "
+                          "Windows 10/11 มี Edge มาให้ปกติ หรือติดตั้ง Chrome/Brave หรือรัน `playwright install chromium` "
+                          f"— {str(e)[:120]}") from e
 
 
 def robots_allows(url: str) -> bool:
@@ -186,7 +214,7 @@ def _capture_generic(page: Any, url: str, progress: Progress) -> List[Dict[str, 
 
 
 def capture(urls: List[str], progress: Progress = print, name: Optional[str] = None, nav_timeout_ms: int = 45000,
-            init_script: Optional[str] = None) -> Dict[str, Any]:
+            init_script: Optional[str] = None, browser: str = "auto") -> Dict[str, Any]:
     """Render each URL once and return {"source", "url", "docs": [{tab, title, text}], "captured_at"}."""
     try:
         from playwright.sync_api import sync_playwright
@@ -202,10 +230,10 @@ def capture(urls: List[str], progress: Progress = print, name: Optional[str] = N
             raise IngestError(f"robots.txt ของเว็บนี้ไม่อนุญาตให้เข้า {u} — จึงไม่เก็บข้อมูล")
     docs: List[Dict[str, str]] = []
     with sync_playwright() as p:
-        browser = launch_browser(p)
+        browser_ = launch_browser(p, browser)
         try:
             host = urllib.parse.urlsplit(urls[0]).hostname or ""
-            ctx = browser.new_context(user_agent=UA, viewport={"width": 1400, "height": 900})
+            ctx = browser_.new_context(user_agent=UA, viewport={"width": 1400, "height": 900})
             init = init_script or next((s for h, s in SITE_INIT_SCRIPTS.items() if host.endswith(h)), None)
             if init:
                 ctx.add_init_script(init)
@@ -227,7 +255,7 @@ def capture(urls: List[str], progress: Progress = print, name: Optional[str] = N
                     docs += _capture_generic(page, url, progress)
                 page.close()
         finally:
-            browser.close()
+            browser_.close()
     docs = [{"tab": d["tab"], "title": d["title"], "text": clean_text(d["text"])} for d in docs]
     docs = [d for d in docs if d["text"]]
     if not docs:
@@ -242,9 +270,10 @@ def main(argv: Optional[List[str]] = None) -> int:
     ap.add_argument("urls", nargs="+")
     ap.add_argument("--out", required=True)
     ap.add_argument("--name")
+    ap.add_argument("--browser", default="auto", help="auto | edge | chrome | brave | vivaldi | opera | chromium | firefox")
     ap.add_argument("--init-script", help="JS run before the page loads (e.g. to pick a language); mainly for local mirrors")
     a = ap.parse_args(argv)
-    snap = capture(a.urls, print, a.name, init_script=a.init_script)
+    snap = capture(a.urls, print, a.name, init_script=a.init_script, browser=a.browser)
     os.makedirs(os.path.dirname(os.path.abspath(a.out)), exist_ok=True)
     with open(a.out, "w", encoding="utf-8") as f:
         json.dump(snap, f, ensure_ascii=False)

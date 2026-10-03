@@ -11,7 +11,7 @@ SRC = ROOT / "omni_brain"
 INST = ROOT / "installer"
 OUT = ROOT / "release" / "OmniBrain-Setup.zip"
 TOP = "OmniBrain-Setup"
-APP_FILES = ["omni_brain_mcp.py", "agent.py", "app.py", "wiki_kb.py", "wiki_ingest.py", "requirements.txt", "README.md", "ui/index.html"]
+APP_FILES = ["omni_brain_mcp.py", "agent.py", "app.py", "browsers.py", "wiki_kb.py", "wiki_ingest.py", "requirements.txt", "README.md", "ui/index.html"]
 INSTALLER_FILES = ["Install.bat", "Uninstall.bat", "setup.py", "README-ติดตั้ง.txt"]
 
 

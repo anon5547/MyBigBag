@@ -32,6 +32,8 @@ DEFAULTS: Dict[str, Any] = {
     "price_in": 0.0,          # USD per 1M tokens; 0 = unknown, only tokens are shown
     "price_out": 0.0,
     "kb_url": "https://lumivaraonline.com/wiki/",   # source for the "เรียนรู้" button
+    "ui_browser": "auto",        # how the app window opens: auto | pywebview | default | edge | chrome | firefox | ...
+    "ingest_browser": "auto",    # which browser renders the wiki when learning
     "image_width": 1024,      # smaller = fewer image tokens; 1024 still reads normal UI text
     "history_turns": 6,
     "max_steps": 12,

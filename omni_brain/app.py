@@ -15,7 +15,6 @@ import socket
 import sys
 import threading
 import time
-import webbrowser
 from collections import deque
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any, Deque, Dict, Optional
@@ -36,6 +35,7 @@ def home_dir() -> str:
 HOME = home_dir()
 os.environ.setdefault("OMNI_BRAIN_DB", os.path.join(HOME, "agent_brain.db"))
 sys.path.insert(0, HERE)
+import browsers  # noqa: E402
 import omni_brain_mcp as ob  # noqa: E402  (after OMNI_BRAIN_DB is set)
 ob.DB_PATH = os.environ["OMNI_BRAIN_DB"]  # also correct if the module was imported earlier
 from agent import DEFAULTS, PRESETS, Agent, selftest  # noqa: E402
@@ -157,7 +157,7 @@ class App:
             try:
                 import wiki_ingest
 
-                snap = wiki_ingest.capture([url], progress)
+                snap = wiki_ingest.capture([url], progress, browser=self.settings.cfg().get("ingest_browser", "auto"))
                 n = ob.kb.replace_source(snap["source"], snap["url"], snap["docs"])
                 self.kb_state = {"running": False, "error": None, "msg": f"เรียนรู้เสร็จ: {n['docs']} รายการ ({n['chunks']} ส่วน)"}
                 self.emit({"type": "notice", "text": "📚 " + self.kb_state["msg"]})
@@ -243,6 +243,7 @@ class App:
             "presets": PRESETS, "status": st, "usage": self.last_usage, "busy": self.busy.locked(),
             "skills": self.skills(), "max_lease": ob.MAX_LEASE_MIN,
             "kb": {"sources": ob.kb.status(), **self.kb_state},
+            "browsers": [{k: b[k] for k in ("id", "name", "family")} for b in browsers.detect()],
         }
 
 
@@ -339,6 +340,10 @@ class Handler(BaseHTTPRequestHandler):
                 return self._json({"ok": True})
             if p == "/api/skill/run":
                 return self._json(APP.run_skill_by_human(str(data.get("name", ""))))
+            if p == "/api/open-browser":  # only ever opens THIS app's own address, never a caller-supplied URL
+                bid = str(data.get("id", ""))
+                ok = browsers.open_url(bid, f"http://127.0.0.1:{APP.port}/")
+                return self._json({"ok": ok} if ok else {"ok": False, "error": "เปิดเบราว์เซอร์นี้ไม่ได้"}, 200 if ok else 400)
             if p == "/api/kb/learn":
                 ok = APP.start_learn(str(data.get("url", "")))
                 return self._json({"ok": ok, "running": not ok})
@@ -363,9 +368,18 @@ def make_server(port: int = 0) -> ThreadingHTTPServer:
     return srv
 
 
+def _has_pywebview() -> bool:
+    import importlib.util
+
+    return importlib.util.find_spec("webview") is not None
+
+
 def main() -> None:
     ap = argparse.ArgumentParser()
-    ap.add_argument("--browser", action="store_true", help="open in the default browser instead of a native window")
+    ap.add_argument("--browser", nargs="?", const="default", metavar="ID",
+                    help="show the UI in a browser instead of the native window: default | edge | chrome | brave | firefox | ...")
+    ap.add_argument("--also", default="", metavar="IDS",
+                    help="also open the UI in these browsers (comma separated), e.g. --also chrome,firefox")
     ap.add_argument("--no-open", action="store_true")
     ap.add_argument("--port", type=int, default=0)
     args = ap.parse_args()
@@ -379,15 +393,27 @@ def main() -> None:
     print(f"OmniBrain running at {url}  (data: {HOME})")
     if args.no_open:
         threading.Event().wait()
+    found = browsers.detect()
+    plan = browsers.choose_ui_launch(args.browser or APP.settings.cfg().get("ui_browser", "auto"), found, _has_pywebview())
+    for extra in [x.strip() for x in args.also.split(",") if x.strip()]:
+        if not browsers.open_url(extra, url, found):
+            print(f"เปิด {extra} ไม่ได้ (ไม่พบในเครื่อง)")
     try:
-        if args.browser:
-            raise ImportError
-        import webview  # pip install pywebview  (uses Edge WebView2 on Windows 10/11)
+        if plan["mode"] == "pywebview":
+            import webview  # pip install pywebview  (uses Edge WebView2 on Windows 10/11)
 
-        webview.create_window("OmniBrain", url, width=1120, height=780, min_size=(760, 560), background_color="#0b0d10")
-        webview.start()
+            webview.create_window("OmniBrain", url, width=1120, height=780, min_size=(760, 560), background_color="#0b0d10")
+            webview.start()
+        else:
+            opened = plan["browser"] and browsers.open_url(plan["browser"], url, found, app_mode=(plan["mode"] == "app"))
+            if not opened:
+                browsers.open_url("default", url)
+            try:
+                threading.Event().wait()
+            except KeyboardInterrupt:
+                pass
     except ImportError:
-        webbrowser.open(url)
+        browsers.open_url("default", url)
         try:
             threading.Event().wait()
         except KeyboardInterrupt:

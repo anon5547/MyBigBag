@@ -15,6 +15,17 @@ python app.py            # native window if pywebview is installed, else your br
 Settings (gear icon): pick a provider, paste a model name and key, press **ทดสอบโมเดล**. The test
 reads a generated image, so you learn in seconds whether the model can really see the screen.
 
+## Browsers
+* `browsers.py` finds Edge, Chrome, Brave, Vivaldi, Opera, Chromium and Firefox (Program Files / %LOCALAPPDATA% on
+  Windows, /Applications on macOS, PATH on Linux).
+* Window: `python app.py` uses the native window if `pywebview` is installed, otherwise a chromeless Edge/Chrome
+  window (`--app=`), otherwise the system default. Pick one with Settings > "เปิดหน้าแอปด้วย" or
+  `--browser edge|chrome|firefox|brave|default`. Open it in several at once with `--also chrome,firefox` or the
+  buttons in Settings (all of them show the same session).
+* Wiki learning: Settings > "เบราว์เซอร์ที่ใช้อ่าน Wiki" (or `wiki_ingest.py --browser brave`). Auto = Edge, Chrome,
+  other Chromium browsers, then Playwright's own Chromium. Firefox works only through Playwright's own build
+  (`playwright install firefox`); Playwright cannot drive an ordinary Firefox install.
+
 ## Game knowledge (wiki)
 * `wiki_kb.py` stores a game wiki in the same SQLite file (FTS5 trigram index: Thai works without word
   segmentation). `wiki_ingest.py` renders a JS wiki in Edge/Chrome via Playwright and saves it - one page load,
